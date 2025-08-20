@@ -217,6 +217,31 @@ if __name__ == "__main__":
         # Save tokenizer
         tokenizer.model.save("tokenizer")
         # tokenizer.save("tokenizer.json")
+    elif mode == "runfinetune":
+        tokenizer = RobertaTokenizerFast(vocab_file="tokenizer/vocab.json", merges_file="tokenizer/merges.txt")
+        samples = np.load("../disc-interpret/dataset-CEU/X.npy")
+        labels = np.load("../disc-interpret/dataset-CEU/Y.npy")
+        haps = samples[..., 0].astype(np.long)
+        distances = samples[..., 1].astype(np.float32) * global_vars.L
+
+        # Now compute tokenized data with distances
+        tokenized_data = []
+
+        for hap_str, distances in tqdm(hapiter_with_distances(haps, distances),
+                                       total=samples.shape[0] * samples.shape[1]):
+            encodings, token_distances = compute_token_distances(hap_str, distances, tokenizer)
+            
+            tokenized_data.append({
+                'token_ids': encodings.input_ids,
+                'labels': encodings.tokens,
+                'distances': token_distances.tolist()
+            })
+        # example
+        print(tokenized_data[0])
+        # Save tokenized data
+        dataset = Dataset.from_list(tokenized_data)
+        dataset.save_to_disk(f"dataset-{pop}/tokenized")
+
     else:
         tokenizer = RobertaTokenizerFast(vocab_file="tokenizer/vocab.json", merges_file="tokenizer/merges.txt")
         samples = load_data(pop=pop)

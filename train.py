@@ -1,7 +1,7 @@
 from tokenizers import Tokenizer
 from transformers import RobertaConfig, RobertaTokenizerFast
 from transformers import Trainer, TrainingArguments, DataCollatorForLanguageModeling
-from model import HapbertaForMaskedLM, RelativePosAttnBias, HapbertaAttention
+from models import HapbertaForMaskedLM, RelativePosAttnBias, HapbertaAttention
 from datasets import load_from_disk
 import torch
 import numpy as np

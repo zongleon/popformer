@@ -1,4 +1,4 @@
-from model import *
+from models import *
 import numpy as np
 
 model = SiteHapModel(input_dim=2, hidden_dim=64, n_heads=4).to("cuda")
