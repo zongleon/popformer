@@ -1,151 +1,194 @@
-import numpy as np
-from model import *
+from tokenizers import Tokenizer
+from transformers import RobertaConfig, RobertaTokenizerFast
+from transformers import Trainer, TrainingArguments, DataCollatorForLanguageModeling
+from model import HapbertaForMaskedLM, RelativePosAttnBias, HapbertaAttention
+from datasets import load_from_disk
 import torch
-from torch.utils.data import DataLoader, TensorDataset
-import torch.nn.functional as F
+import numpy as np
 
-def create_random_mask(data_shape, mask_prob=0.3, device='cpu'):
-    """
-    Random SNP mask across haplotypes.
-    Args:
-        data_shape: (n, n_hap, n_snp)
-        mask_prob: fraction of SNPs to mask
-    Returns:
-        mask: boolean tensor of shape (n, n_hap, n_snp)
-    """
-    mask = torch.rand(data_shape, device=device) < mask_prob
-    return mask
+def replace_attention_with_genomic_bias(model, bias_module_cls, **bias_kwargs):
+    """Replace all RobertaAttention layers with bias-augmented version."""
+    for layer in model.encoder.layer:
+        old_attn = layer.attention
+        new_attn = HapbertaAttention(
+            model.config,
+            bias_module_cls(**bias_kwargs),
+        )
+        # copy weights from old attention so we don't lose initialization
+        new_attn.load_state_dict(old_attn.state_dict(), strict=False)
+        layer.attention = new_attn
+    return model
+
+class HaploDataCollator:
+    """Custom data collator that handles both tokens and genomic distances."""
+    
+    def __init__(self, tokenizer, mlm_probability=0.15):
+        self.tokenizer = tokenizer
+        self.mlm_probability = mlm_probability
+        self.mask_token_id = tokenizer.mask_token_id
+
+    def __call__(self, examples):
+        # Extract token_ids and distances from examples
+        token_ids = [ex["token_ids"] for ex in examples]
+        distances_list = [ex["distances"] for ex in examples]
+        
+        # Pad sequences to same length
+        max_len = max(len(ids) for ids in token_ids)
+        
+        input_ids = []
+        labels = []
+        distance_matrices = []
+        attention_masks = []
+        
+        for ids, dists in zip(token_ids, distances_list):
+            # Pad token ids
+            padded_ids = ids + [self.tokenizer.pad_token_id] * (max_len - len(ids))
+            
+            # Create attention mask
+            attn_mask = [1] * len(ids) + [0] * (max_len - len(ids))
+            
+            # Apply MLM masking
+            masked_ids = padded_ids.copy()
+            label_ids = [-100] * max_len  # -100 is ignored in loss computation
+            
+            for i in range(len(ids)):  # Only mask non-padded tokens
+                if torch.rand(1).item() < self.mlm_probability:
+                    label_ids[i] = padded_ids[i]  # Store original token for loss
+                    masked_ids[i] = self.mask_token_id  # Replace with mask token
+            
+            # Create distance matrix
+            seq_len = len(ids)
+            dist_matrix = torch.zeros(max_len, max_len)
+            
+            if len(dists) > 0:
+                # Build cumulative distance matrix
+                cumulative_dists = torch.cumsum(torch.tensor([0.0] + [0.0] + dists + [0.0]), dim=0)
+                for i in range(seq_len):
+                    for j in range(seq_len):
+                        dist_matrix[i, j] = abs(cumulative_dists[i] - cumulative_dists[j])
+            
+            input_ids.append(masked_ids)
+            labels.append(label_ids)
+            distance_matrices.append(dist_matrix)
+            attention_masks.append(attn_mask)
+        
+        return {
+            "input_ids": torch.tensor(input_ids, dtype=torch.long),
+            "labels": torch.tensor(labels, dtype=torch.long),
+            "distances": torch.stack(distance_matrices),
+            "attention_mask": torch.tensor(attention_masks, dtype=torch.long),
+        }
 
 
-def compute_class_weights(targets):
-    """
-    Compute class weights for imbalanced data.
-    Args:
-        targets: (n, n_hap, n_snp) tensor of 0/1
-    Returns:
-        weights: tensor of shape (2,)
-    """
-    flat = targets.view(-1)
-    n0 = (flat == 0).sum().item()
-    n1 = (flat == 1).sum().item()
-    total = n0 + n1
-    # Avoid division by zero
-    w0 = total / (2 * n0) if n0 > 0 else 1.0
-    w1 = total / (2 * n1) if n1 > 0 else 1.0
-    weights = torch.tensor([w0, w1], dtype=torch.float32)
-    return weights
+# tokenizer, and add special tokens
+tokenizer = RobertaTokenizerFast(vocab_file="tokenizer/vocab.json", 
+                                 merges_file="tokenizer/merges.txt")
 
+# load dataset
+dataset = load_from_disk("dataset-CEU/tokenized")
 
-def train_epoch(model, head, optimizer, data, targets, batch_size=16, device='cuda'):
-    """
-    Single training epoch for summary statistic prediction (regression).
-    """
-    model.train()
-    head.train()
-    dataset = TensorDataset(data, targets)
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-    total_loss = 0.0
-    n_batches = 0
+# Split dataset
+dataset = dataset.train_test_split(test_size=0.1)
+train_dataset = dataset["train"]
+eval_dataset = dataset["test"]
 
-    for xb, y in loader:
-        xb, y = xb.to(device), y.to(device)
-        optimizer.zero_grad()
-        reps = model(xb)  # (b, n_hap, n_snp, hidden)
-        # Pool over SNPs and haplotypes to get a single representation per sample
-        pooled = reps.mean(dim=(1, 2))  # (b, hidden)
-        preds = head(pooled)  # (b, n_stats)
-        loss = F.mse_loss(preds, y)
-        loss.backward()
-        optimizer.step()
-        total_loss += loss.item()
-        n_batches += 1
+print(train_dataset)
 
-        if n_batches % 10 == 0:
-            print(f"Batch {n_batches}: loss={loss.item():.4f}")
+# model configuration
+config = RobertaConfig(
+    vocab_size=tokenizer.vocab_size + 5,
+    hidden_size=768,
+    num_hidden_layers=12,
+    num_attention_heads=12,
+    intermediate_size=3072,
+    max_position_embeddings=512,
+    position_embedding_type="haplo",
+)
 
-    avg_loss = total_loss / n_batches
-    return avg_loss
+# Create model for masked LM
+model = HapbertaForMaskedLM(config)
 
+# Remove absolute position embeddings
+model.roberta.embeddings.position_embeddings = None
 
-def evaluate(model, head, data, targets, batch_size=16, device='cuda'):
-    """
-    Evaluate summary statistic prediction (regression MSE).
-    """
-    model.eval()
-    head.eval()
-    dataset = TensorDataset(data, targets)
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
-    total_loss = 0.0
-    n_batches = 0
+# Replace attention layers with genomic bias
+model.roberta = replace_attention_with_genomic_bias(
+    model.roberta,
+    bias_module_cls=RelativePosAttnBias,
+    num_buckets=32,
+    max_distance=50000,
+    num_heads=config.num_attention_heads,
+)
 
-    with torch.no_grad():
-        for xb, y in loader:
-            xb, y = xb.to(device), y.to(device)
-            reps = model(xb)
-            pooled = reps.mean(dim=(1, 2))  # (b, hidden)
-            preds = head(pooled)  # (b, n_stats)
-            loss = F.mse_loss(preds, y)
-            total_loss += loss.item()
-            n_batches += 1
+print(model)
 
-    avg_loss = total_loss / n_batches
-    return avg_loss
+# data collator
+data_collator = HaploDataCollator(tokenizer, mlm_probability=0.15)
 
-def apply_input_mask(data, mask, mask_value=0):
-    """
-    Mask the input allele channel at masked positions.
-    Args:
-        data: (n, n_hap, n_snp, 2) tensor
-        mask: (n, n_hap, n_snp) boolean tensor, True for masked positions
-        mask_value: value to use for masked positions (should not be a real allele)
-    Returns:
-        masked_data: copy of data with masked positions set to mask_value in allele channel
-    """
-    data_masked = data.clone()
-    data_masked[..., 0][mask] = mask_value
-    return data_masked
+# test data collator
+# print(data_collator([train_dataset[0], train_dataset[1]]))
 
-# Example usage for summary statistic prediction
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-input_dim = 2
-hidden_dim = 128
-n_heads = 4
-n_layers = 4
-n_stats = 2  # e.g., allele frequency and heterozygosity
+# test training args (on cpu)
+# training_args = TrainingArguments(
+#     output_dir="./hapberta",
+#     overwrite_output_dir=True,
+#     num_train_epochs=1,  # Single epoch for testing
+#     per_device_train_batch_size=2,  # Small batch size for CPU
+#     per_device_eval_batch_size=2,
+#     max_steps=10,  # Limit steps for quick testing
+#     warmup_steps=2,
+#     weight_decay=0.01,
+#     logging_dir="./logs",
+#     logging_steps=2,  # Log frequently for testing
+#     save_steps=5,
+#     eval_steps=5,
+#     eval_strategy="steps",
+#     save_strategy="steps",
+#     load_best_model_at_end=False,  # Skip for testing
+#     dataloader_pin_memory=False,  # Disable for CPU
+#     dataloader_num_workers=0,  # Single threaded for CPU
+#     use_cpu=True,  # Force CPU usage
+#     remove_unused_columns=False,
+#     report_to="none",  # Disable wandb/tensorboard for testing
+# )
 
-model = SiteHapModel(input_dim, hidden_dim, n_heads, n_layers).to(device)
-# The head should output n_stats values (regression)
-head = torch.nn.Linear(hidden_dim, n_stats).to(device)
-optimizer = torch.optim.Adam(list(model.parameters()) + list(head.parameters()), lr=1e-5)
+# training arguments
+training_args = TrainingArguments(
+    output_dir="./hapberta",
+    overwrite_output_dir=True,
+    num_train_epochs=3,
+    per_device_train_batch_size=16,
+    per_device_eval_batch_size=16,
+    warmup_steps=500,
+    weight_decay=0.01,
+    logging_dir="./logs",
+    logging_steps=100,
+    save_steps=1000,
+    eval_steps=1000,
+    eval_strategy="steps",
+    save_strategy="steps",
+    save_total_limit=4,
+    load_best_model_at_end=True,
+    metric_for_best_model="eval_loss",
+    greater_is_better=False,
+    dataloader_pin_memory=True,
+    dataloader_num_workers=4,
+    fp16=True,
+    remove_unused_columns=False,
+)
 
-def get_data(path: str):
-    data = np.load(path)[:10000]
-    data[:, :, :, 0][data[:, :, :, 0] == -1] = 0  # replace -1 with 0
-    return torch.tensor(data, dtype=torch.float32, device=device)
+# trainer
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=train_dataset,
+    eval_dataset=eval_dataset,
+    data_collator=data_collator,
+)
 
-def compute_summary_stats(data):
-    # data: (n, n_hap, n_snp, 2)
-    # Compute allele frequency and heterozygosity for each sample
-    allele = data[..., 0]  # (n, n_hap, n_snp)
-    # allele frequency: mean over all haplotypes and SNPs
-    freq = allele.float().mean(dim=(1, 2))  # (n,)
-    # heterozygosity: mean of 2*p*(1-p) over all SNPs and haps
-    p = allele.float().mean(dim=2)  # (n, n_hap)
-    het = (2 * p * (1 - p)).mean(dim=1)  # (n,)
-    stats = torch.stack([freq, het], dim=1)  # (n, 2)
-    return stats
+# train the model
+trainer.train()
 
-train_data = get_data("../disc-interpret/dataset-CEU/X.npy")
-train_targets = compute_summary_stats(train_data)
-test_data = get_data("../disc-interpret/dataset-CHB/X.npy")
-test_targets = compute_summary_stats(test_data)
-
-for epoch in range(3):
-    loss = train_epoch(model, head, optimizer, train_data, train_targets, batch_size=32, device=device)
-    print(f"Epoch {epoch+1}: train loss={loss:.4f}")
-
-    test_loss = evaluate(model, head, test_data, test_targets, batch_size=32, device=device)
-    print(f"Test summary stat MSE: {test_loss:.4f}")
-
-# save pre-trained model
-torch.save(model.state_dict(), "sitehap_pretrain.pth")
+# save the final model
+trainer.save_model("./hapberta")
+tokenizer.save_pretrained("./hapberta/")
