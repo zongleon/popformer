@@ -1,46 +1,95 @@
 import numpy as np
-from transformers import AutoConfig, AutoTokenizer
+import torch
 from models import HapbertaForMaskedLM, HapbertaForSequenceClassification
 from datasets import load_from_disk
 from collators import HaploSimpleDataCollator, HaploSimpleNormalDataCollator
 
 
-################################################
-tokenizer = AutoTokenizer.from_pretrained("./hapberta2d_simple")
-model = HapbertaForMaskedLM.from_pretrained(
-    "./hapberta2d_simple/"
-)
+def test_masked_lm():
+    model = HapbertaForMaskedLM.from_pretrained(
+        "./models/hapberta2d/"
+    )
 
-# model  = HapbertaForMaskedLM(AutoConfig.from_pretrained("./hapberta2d_simple/"))
+    ds = load_from_disk("dataset/tokenized")
+    collator = HaploSimpleDataCollator()
 
-ds = load_from_disk("dataset-CEU/tokenized_simple")
-collator = HaploSimpleDataCollator(tokenizer)
+    # make a batch
+    inputs = collator([ds[0]])
 
-# make a batch
-inputs = collator([ds[0]])
+    # print(inputs)
 
-# print masked haps and unmask token
-haps = inputs["input_ids"].numpy()
+    # print masked haps and unmask token
+    haps = inputs["input_ids"].numpy()
 
-print(haps)
-print({i: (inputs["labels"][haps == tokenizer.mask_token_id] == i).sum() for i in range(7)})
+    print(haps)
+    print({i: (inputs["labels"][haps == 4] == i).sum() for i in range(7)})
+
+    # forward
+    outputs = model(**inputs)
+
+    # print the predicted haps
+    # print(outputs["logits"].size())
+
+    # print the count of predicted labels (vocab size 7)
+    counts = outputs["logits"].argmax(dim=-1).cpu().numpy()
+    print(counts)
+    print({i: (counts == i).sum() for i in range(7)})
+
+    # print the real vs predicted mask labels
+    lbls = inputs["labels"][haps == 4].numpy()
+    predlbls = counts[haps == 4]
+
+    print(lbls[:20])
+    print(predlbls[:20])
+    print((lbls == predlbls).mean())
+
+def test_realsim_ft():
+    model = HapbertaForSequenceClassification.from_pretrained(
+        "./models/hapberta2d_realsim/"
+    )
+
+    ds = load_from_disk("dataset/tokenizedrealsim").shuffle()
+
+    collator = HaploSimpleNormalDataCollator()
+
+    # make a batch
+    inputs = collator([ds[i] for i in range(4)])
+
+    haps = inputs["input_ids"].numpy()
+
+    print(haps[0])
+    print("Labels: ", inputs["labels"].numpy())
+
+    outputs = model(**inputs)
+    preds = outputs["logits"].argmax(dim=-1).cpu().numpy()
+    print(outputs["logits"])
+    print(preds)
 
 
-# forward
-outputs = model(**inputs)
+def test_sel_ft():
+    model = HapbertaForSequenceClassification.from_pretrained(
+        "./models/hapberta2d_sel/",
+        num_labels=1,
+    )
 
-# print the predicted haps
-# print(outputs["logits"].size())
+    ds = load_from_disk("dataset/tokenizedsel").shuffle()
 
-# print the count of predicted labels (vocab size 7)
-counts = outputs["logits"].argmax(dim=-1).cpu().numpy()
-print(counts)
-print({i: (counts == i).sum() for i in range(7)})
+    collator = HaploSimpleNormalDataCollator(label_dtype=torch.float32)
 
-# print the real vs predicted mask labels
-lbls = inputs["labels"][haps == tokenizer.mask_token_id].numpy()
-predlbls = counts[haps == tokenizer.mask_token_id]
+    # make a batch
+    inputs = collator([ds[i] for i in range(4)])
 
-print(lbls)
-print(predlbls)
-print((lbls == predlbls).mean())
+    haps = inputs["input_ids"].numpy()
+
+    print(haps[0])
+    print("Labels: ", inputs["labels"].numpy())
+
+    outputs = model(**inputs)
+    print(outputs["logits"].detach())
+    # print(preds)
+
+
+if __name__ == "__main__":
+    # test_masked_lm()
+    # test_realsim_ft()
+    test_sel_ft()

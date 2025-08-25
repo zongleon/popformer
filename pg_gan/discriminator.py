@@ -13,11 +13,10 @@ if find_spec("jax") is not None:
 elif find_spec("tensorflow") is not None:
     import tensorflow as tf # type: ignore
     reduce_sum = tf.math.reduce_sum
-    # reduce_sum = tf.math.reduce_max
     
 
 from keras.layers import Dense, Flatten, Conv1D, Conv2D, \
-    MaxPooling2D, AveragePooling1D, Dropout, Concatenate, Layer, LayerNormalization
+    MaxPooling2D, AveragePooling1D, Dropout, Concatenate, Layer
 from keras import Model
 from keras.saving import register_keras_serializable
 
@@ -41,9 +40,7 @@ class OnePopModel(Model):
         self.conv2 = Conv2D(64, (1, 5), activation='relu')
         self.pool = MaxPooling2D(pool_size = (1,2), strides = (1,2))
 
-        self.reduce = ReduceSum()
         self.flatten = Flatten()
-        # self.norm = LayerNormalization()
         self.dropout = Dropout(rate=0.0)
 
         self.fc1 = Dense(self.fc_size, name="fc1", activation='relu') # changed from 128
@@ -62,8 +59,7 @@ class OnePopModel(Model):
         # can try max or sum as the permutation-invariant function
         #x = tf.math.reduce_max(x, axis=1)
         #x = tf.math.reduce_sum(x, axis=1)
-        x = self.reduce(x)
-        # x = self.norm(x)
+        x = ReduceSum()(x)
 
         x = self.flatten(x)
         x = self.fc1(x)

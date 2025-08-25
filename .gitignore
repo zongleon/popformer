@@ -1,7 +1,8 @@
 __pycache__
 
 dataset*/
-hapberta/
+1000g/
+models/
 tokenizer/
 
 *.pth

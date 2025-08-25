@@ -13,7 +13,6 @@ from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
 
 from datasets import Dataset
-from transformers import AutoTokenizer, RobertaTokenizerFast
 
 from pg_gan import global_vars
 from pg_gan.real_data_random import RealDataRandomIterator
@@ -30,7 +29,7 @@ BED_PATH = "/bigdata/smathieson/1000g-share/HDF5/20120824_strict_mask.bed"
 
 pop = None
 
-_OUTPUT_SAMPLES = "dataset-{pop}/samples.npz"
+_OUTPUT_SAMPLES = "dataset/samples.npz"
 
 def read_outfile(file: str) -> Generator:
     """
@@ -65,6 +64,14 @@ def get_iterator(pop: str, seed=None) -> RealDataRandomIterator:
     return iterator
 
 
+def get_iterator_ghist(name: str, bed_name: str) -> RealDataRandomIterator:
+    iterator = RealDataRandomIterator(filename=name, bed_file=bed_name, seed=0)
+    
+    print(f"Loaded iterator: {name}")
+    print(f"{iterator.num_snps} SNPs | {iterator.num_samples} samples")
+
+    return iterator
+
 def get_data(
     pop: str, n_samples: int, seed=None
 ) -> np.ndarray:
@@ -88,15 +95,15 @@ def get_data(
     return samples
 
 
-def save_data(samples: np.ndarray):
+def save_data(pop: str, samples: np.ndarray):
     """
     Save the dataset to npz and csv files.
     """
-    d = os.path.dirname(_OUTPUT_SAMPLES.format(pop=pop))
+    d = os.path.dirname(_OUTPUT_SAMPLES)
     if not os.path.exists(d):
         os.makedirs(d, exist_ok=True)
 
-    np.savez_compressed(os.path.join(d, "X.npz"), X=samples)
+    np.savez_compressed(os.path.join(d, f"X_{pop}.npz"), X=samples)
     print(f"Saved {len(samples)} samples with {samples.shape[2]} SNPs each.")
 
 
@@ -106,40 +113,23 @@ def load_data(pop: str, dir=None) -> np.ndarray:
     Returns a tuple of (samples, labels).
     """
     if dir:
-        file = os.path.join(dir, f"dataset-{pop}", "samples.npz")
+        file = os.path.join(dir, "samples.npz")
     else:
-        file = _OUTPUT_SAMPLES.format(pop=pop)
+        file = _OUTPUT_SAMPLES
     d = os.path.dirname(file)
     if not os.path.exists(d):
         raise FileNotFoundError(f"Dataset path {file} does not exist.")
 
     # Load samples and labels into memory
-    samples = np.load(os.path.join(d, "X.npz"))["X"]
+    samples = np.load(os.path.join(d, f"X_{pop}.npz"))["X"]
 
-    print(f"Loaded {len(samples)} samples with {samples.shape[1]} SNPs each.")
+    print(f"Loaded {len(samples)} samples with {samples.shape[2]} SNPs each.")
 
     return samples
 
-def hapiter(samples: np.ndarray):
-    """
-    Create a haplotype iterator from the samples.
-    """
-    samples = samples[..., 0]
-    for sample in samples:
-        # sample like (n_haps, n_snps)
-        for hap in sample:
-            yield "".join(str(x) for x in hap)
-
-def hapiter_with_distances(hap_samples: np.ndarray, dist_samples: np.ndarray):
-    """
-    Create a haplotype iterator from the samples with corresponding distances.
-    """
-    for hap_sample, dist_sample in zip(hap_samples, dist_samples):
-        # sample like (n_haps, n_snps)
-        distances = dist_sample[0]
-        for hap in hap_sample:
-            hap_str = "".join(str(int(x)) for x in hap)
-            yield hap_str, distances
+def hapiter(hap_sample: np.ndarray):
+    for hap in hap_sample:
+        yield hap
 
 def popiter(hap_sample: np.ndarray, dist_sample: np.ndarray):
     """
@@ -148,241 +138,200 @@ def popiter(hap_sample: np.ndarray, dist_sample: np.ndarray):
     # sample like (n_haps, n_snps)
     distances = dist_sample[0]
     for hap in hap_sample:
-        hap_str = "".join(str(int(x)) for x in hap)
-        yield hap_str, distances
+        yield hap, distances
 
-def compute_token_distances(hap_str: str, distances: np.ndarray, tokenizer):
+
+def compute_token_distances_simple(hap: np.ndarray, distances: np.ndarray):
     """
     Compute distances from middle of one token to middle of the next token.
     
     Args:
-        hap_str: String representation of haplotype
+        hap: Array representation of haplotype
         distances: Array of distances between consecutive SNPs
         tokenizer: Trained tokenizer
     
     Returns:
         Tuple of encodings, distances between token middles
     """
-    # Encode the haplotype to get tokens
-    encoding = tokenizer(hap_str)
-    tokens = encoding.input_ids
-    
-    if len(tokens) <= 1:
-        return encoding, np.array([])
-    
-    # Get the span (start, end) of each token in the original sequence
-    token_spans = []
-    for i, token in enumerate(tokens):
-        span = encoding.token_to_chars(i)
-        if span is not None:
-            token_spans.append(span)
-    
-    # Compute middle position of each token
-    token_middles = []
-    for start, end in token_spans:
-        middle_pos = (start + end - 1) / 2  # -1 because end is exclusive
-        token_middles.append(middle_pos)
-    
-    # Compute cumulative distances to get absolute positions
-    cumulative_distances = np.concatenate([[0], np.cumsum(distances), [0]])
-    
-    # Interpolate to get distances at token middle positions
-    token_middle_distances = np.interp(token_middles, range(len(cumulative_distances)), cumulative_distances)
-    
-    # Compute distances between consecutive token middles
-    token_distances = np.diff(token_middle_distances, prepend=0, append=0)
-    
-    print(encoding.input_ids)
-    print(token_distances)
-    print(len(encoding.input_ids), len(token_distances))
-    sleep(1)
-    return encoding, token_distances
-
-
-def compute_token_distances_simple(hap_str: str, distances: np.ndarray, tokenizer):
-    """
-    Compute distances from middle of one token to middle of the next token.
-    
-    Args:
-        hap_str: String representation of haplotype
-        distances: Array of distances between consecutive SNPs
-        tokenizer: Trained tokenizer
-    
-    Returns:
-        Tuple of encodings, distances between token middles
-    """
-    # Encode the haplotype to get tokens
-    encoding = tokenizer(hap_str)
-
-    return encoding, np.concatenate([[0], distances, [0]])
+    return (
+        np.concatenate([[2], hap, [3]]), 
+        np.concatenate([[0], distances, [0]])
+    )
 
 if __name__ == "__main__":
     # "Usage: python dataset.py <gen | tokenize> [n_samples] pop")
     parser = argparse.ArgumentParser(description="Process dataset")
-    parser.add_argument("mode", choices=["gen", "traintokenizer", "trainsimple",
-                                         "runtokenizer", "runtokenizer2d", "runtokenizerft",
-                                         "runsimple"], help="Mode to run")
+    parser.add_argument("mode", choices=["gen",
+                                         "runsimple", "runrealsim", "runsel", "runsel2",
+                                         "ghist"], 
+                                         help="Mode to run")
     parser.add_argument("n_samples", type=int, nargs="?", default=1000, help="Number of samples")
-    parser.add_argument("pop", help="Population identifier")
     args = parser.parse_args()
 
     mode = args.mode
     n_samples = args.n_samples
-    pop = args.pop
 
     if mode == "gen":
-        samples = get_data(
-            pop=pop, n_samples=n_samples, seed=0
-        )
-        save_data(samples)
-    elif mode == "traintokenizer":
-        # load samples
-        samples = load_data(pop=pop)
-        samples = samples.astype(np.int8)
-
-        # tokenize
-        tokenizer = Tokenizer(BPE())
-        trainer = BpeTrainer(vocab_size=5000)
-
-        # Train tokenizer on haplotypes only
-        tokenizer.train_from_iterator(hapiter(samples), 
-                                      trainer=trainer, 
-                                      length=samples.shape[0] * samples.shape[1])
-
-        # Save tokenizer
-        tokenizer.model.save("tokenizer")
-        # tokenizer.save("tokenizer.json")
-    elif mode == "trainsimple":
-        # load samples
-        samples = load_data(pop=pop)
-        samples = samples.astype(np.int8)
-
-        # tokenize
-        tokenizer = Tokenizer(BPE())
-        trainer = BpeTrainer(vocab_size=2)
-
-        # Train tokenizer on haplotypes only
-        tokenizer.train_from_iterator(hapiter(samples), 
-                                      trainer=trainer, 
-                                      length=samples.shape[0] * samples.shape[1])
-
-        # Save tokenizer
-        os.makedirs("tokenizer_simple", exist_ok=True)
-        tokenizer.model.save("tokenizer_simple")
-    elif mode == "runtokenizer":
-        tokenizer = RobertaTokenizerFast(vocab_file="tokenizer/vocab.json", merges_file="tokenizer/merges.txt")
-        samples = load_data(pop=pop)
-        haps = samples[..., 0].astype(np.long)
-        distances = samples[..., 1].astype(np.float32) * global_vars.L
-
-        # Now compute tokenized data with distances
-        tokenized_data = []
-
-        for hap_str, distances in tqdm(hapiter_with_distances(haps, distances),
-                                       total=samples.shape[0] * samples.shape[1]):
-            encodings, token_distances = compute_token_distances(hap_str, distances, tokenizer)
-            
-            tokenized_data.append({
-                'token_ids': encodings.input_ids,
-                # 'token_strings': encodings.tokens,
-                'distances': token_distances.tolist()
-            })
-        # example
-        print(tokenized_data[0])
-        # Save tokenized data
-        dataset = Dataset.from_list(tokenized_data)
-        dataset.save_to_disk(f"dataset-{pop}/tokenized")
-    elif mode == "runtokenizer2d":
-        # save 2d matrices instead of just haplotype strings
-        tokenizer = RobertaTokenizerFast(vocab_file="tokenizer/vocab.json", merges_file="tokenizer/merges.txt")
-        samples = load_data(pop=pop)
-        haps = samples[..., 0].astype(np.long)
-        distances = samples[..., 1].astype(np.float32) * global_vars.L
-
-        # Now compute tokenized data with distances
-        tokenized_data = []
-
-        for hap, dist in tqdm(zip(haps, distances), total=samples.shape[0]):
-            encodings_all = []
-            token_distances_all = []
-            for hap_str, distances in popiter(hap, dist):
-                encodings, token_distances = compute_token_distances(hap_str, distances, tokenizer)
-
-                encodings_all.append(encodings)
-                token_distances_all.append(token_distances)
-            
-            # save list of lists of (n_haps, n_input_ids) and (n_haps, n_distances)
-            tokenized_data.append({
-                'token_ids': encodings_all,
-                'distances': token_distances_all
-            })
-        # example
-        print(tokenized_data[0])
-        # Save tokenized data
-        dataset = Dataset.from_list(tokenized_data)
-        dataset.save_to_disk(f"dataset-{pop}/tokenized2d")
-    elif mode == "runtokenizerft":
-        # save 2d matrices instead of just haplotype strings
-        tokenizer = RobertaTokenizerFast(vocab_file="tokenizer_simple/vocab.json", merges_file="tokenizer_simple/merges.txt")
-        samples = np.load("../disc-interpret/dataset-CEU/X.npy")
-        labels = np.load("../disc-interpret/dataset-CEU/y.npy")
-
-        subset = np.random.choice(samples.shape[0], n_samples, replace=False)
-        samples = samples[subset]
-        labels = labels[subset]
+        for pop in ["CEU", "CHB", "YRI"]:
+            samples = get_data(
+                pop=pop, n_samples=n_samples, seed=0
+            )
+            save_data(pop, samples)
         
-        haps = samples[..., 0].astype(np.long)
-        haps[haps == -1] = 0
-        distances = samples[..., 1].astype(np.float32) * global_vars.L
-
-        # Now compute tokenized data with distances
-        tokenized_data = []
-
-        for hap, dist, label in tqdm(zip(haps, distances, labels), total=samples.shape[0]):
-            encodings_all = []
-            token_distances_all = []
-            for hap_str, distances in popiter(hap, dist):
-                encodings, token_distances = compute_token_distances_simple(hap_str, 
-                                                                            distances, 
-                                                                            tokenizer)
-                encodings_all.append(encodings)
-                token_distances_all.append(token_distances)
-            
-            # save list of lists of (n_haps, n_input_ids) and (n_haps, n_distances)
-            tokenized_data.append({
-                'token_ids': encodings_all,
-                'distances': token_distances_all,
-                'label': label
-            })
-
-        # Save tokenized data
-        dataset = Dataset.from_list(tokenized_data)
-        dataset.save_to_disk(f"dataset-{pop}/tokenizedft")
     elif mode == "runsimple":
-        # save 2d matrices instead of just haplotype strings
-        tokenizer = RobertaTokenizerFast(vocab_file="tokenizer_simple/vocab.json", 
-                                         merges_file="tokenizer_simple/merges.txt")
-        samples = load_data(pop=pop)
-        haps = samples[..., 0].astype(np.long)
-        distances = samples[..., 1].astype(np.float32) * global_vars.L
-
         # Now compute tokenized data with distances
         tokenized_data = []
 
-        for hap, dist in tqdm(zip(haps, distances), total=samples.shape[0]):
-            encodings_all = []
-            token_distances_all = []
-            for hap_str, distances in popiter(hap, dist):
-                encodings, token_distances = compute_token_distances_simple(hap_str, distances, tokenizer)
+        for pop in ["CEU", "CHB", "YRI"]:
+            samples = load_data(pop)
+            haps = samples[..., 0].astype(np.int8)
+            distances = samples[..., 1].astype(np.float32) * global_vars.L
 
-                encodings_all.append(encodings)
-                token_distances_all.append(token_distances)
-            
-            # save list of lists of (n_haps, n_input_ids) and (n_haps, n_distances)
-            tokenized_data.append({
-                'token_ids': encodings_all,
-                'distances': token_distances_all
-            })
+            for hap, dist in tqdm(zip(haps, distances), total=samples.shape[0]):
+                encodings_all = []
+                for hap, distances in popiter(hap, dist):
+                    encodings, token_distances = compute_token_distances_simple(hap, distances)
+
+                    encodings_all.append(encodings)
+                
+                # save list of lists of (n_haps, n_input_ids) and (n_haps, n_distances)
+                tokenized_data.append({
+                    'input_ids': encodings_all,
+                    'distances': token_distances,
+                    'pop': pop,
+                })
+
         # Save tokenized data
         dataset = Dataset.from_list(tokenized_data)
-        dataset.save_to_disk(f"dataset-{pop}/tokenized_simple")
+        dataset.save_to_disk(f"dataset/tokenized")
+
+    elif mode == "runrealsim":
+        
+        tokenized_data = []
+
+        for pop in ["CEU", "CHB", "YRI"]:
+            samples = np.load(f"../disc-interpret/dataset-{pop}/X.npy")
+            labels = np.load(f"../disc-interpret/dataset-{pop}/y.npy")
+
+            subset = np.random.choice(samples.shape[0], n_samples, replace=False)
+            samples = samples[subset]
+            labels = labels[subset]
+            
+            haps = samples[..., 0].astype(np.int8)
+            haps[haps == -1] = 0
+            distances = samples[..., 1].astype(np.float32) * global_vars.L
+
+            for hap, dist, label in tqdm(zip(haps, distances, labels), total=samples.shape[0]):
+                encodings_all = []
+                for hap_str, distances in popiter(hap, dist):
+                    encodings, token_distances = compute_token_distances_simple(hap_str, 
+                                                                                distances)
+                    encodings_all.append(encodings)
+                    
+                # save list of lists of (n_haps, n_input_ids) and (n_haps, n_distances)
+                tokenized_data.append({
+                    'input_ids': encodings_all,
+                    'distances': token_distances,
+                    'label': label
+                })
+
+        # Save tokenized data
+        dataset = Dataset.from_list(tokenized_data)
+        dataset.save_to_disk(f"dataset/tokenizedft")
+    elif mode == "runsel":
+        tokenized_data = []
+
+        for t, sel in zip(
+            ["neutral_3000", "sel1_600", "sel01_600", "sel05_600", "sel025_600"],
+            [0, 1.0, 0.1, 0.5, 0.25]
+        ):
+            for pop in ["CEU", "CHB", "YRI"]:
+                print(f"Processing {pop} {t}")
+                smp: np.ndarray = np.load(f"1000g/{pop}/matrices_{pop}_{t}.npy")[:2400]
+                smp = smp.astype(np.int8)
+                distances: np.ndarray = np.load(f"1000g/{pop}/distances_{pop}_{t}.npy")
+
+                for haps, dist in zip(smp, distances):
+                    encodings_all = []
+                    for hap in hapiter(haps.T):
+                        encodings, token_distances = compute_token_distances_simple(hap.T,
+                                                                                    dist)
+                        encodings_all.append(encodings)
+                            
+                    # save list of lists of (n_haps, n_input_ids) and (n_haps, n_distances)
+                    tokenized_data.append({
+                        'input_ids': encodings_all,
+                        'distances': token_distances,
+                        'label': sel
+                    })
+
+        # Save tokenized data
+        dataset = Dataset.from_list(tokenized_data)
+        dataset.save_to_disk(f"dataset/tokenizedsel")
+    elif mode == "runsel2":
+        tokenized_data = []
+
+        for t, sel in zip(
+            ["neutral_3000", "sel1_600", "sel01_600", "sel05_600", "sel025_600"],
+            [0, 1, 1, 1, 1]
+        ):
+            for pop in ["CEU", "CHB", "YRI"]:
+                print(f"Processing {pop} {t}")
+                smp: np.ndarray = np.load(f"1000g/{pop}/matrices_{pop}_{t}.npy")[:2400]
+                smp = smp.astype(np.int8)
+                distances: np.ndarray = np.load(f"1000g/{pop}/distances_{pop}_{t}.npy")
+
+                for haps, dist in zip(smp, distances):
+                    encodings_all = []
+                    for hap in hapiter(haps.T):
+                        encodings, token_distances = compute_token_distances_simple(hap.T,
+                                                                                    dist)
+                        encodings_all.append(encodings)
+                            
+                    # save list of lists of (n_haps, n_input_ids) and (n_haps, n_distances)
+                    tokenized_data.append({
+                        'input_ids': encodings_all,
+                        'distances': token_distances,
+                        'label': sel
+                    })
+
+        # Save tokenized data
+        dataset = Dataset.from_list(tokenized_data)
+        dataset.save_to_disk(f"dataset/tokenizedsel2")
+    elif mode == "ghist":
+        t = "multisweep.growth_bg"
+        it = get_iterator_ghist(f"GHIST/GHIST_2025_{t}.21.testing_process.h5", "GHIST/raw/21.accessible.bed")
+        n_snps = it.num_snps
+
+        # every 18 snps, sample a region
+        smps = []
+        pos = []
+        for i in tqdm(range(0, n_snps, 18)):
+            region = it.real_region(neg1=False, region_len=False, start_idx=i)
+            if region is not None:
+                smps.append(region)
+                pos.append(it.pos_all[i])
+
+        smps = np.array(smps)
+        pos = np.array(pos)
+        haps = smps[..., 0].astype(np.int8)
+        distances = smps[..., 1].astype(np.float32) * global_vars.L
+        
+        tokenized_data = []
+
+        for haps, dist, p in zip(haps, distances, pos):
+            encodings_all = []
+            for hap in hapiter(haps):
+                encodings, token_distances = compute_token_distances_simple(hap,
+                                                                            dist[0])
+                encodings_all.append(encodings)
+                    
+            # save list of lists of (n_haps, n_input_ids) and (n_haps, n_distances)
+            tokenized_data.append({
+                'input_ids': encodings_all,
+                'distances': token_distances,
+                'pos': p
+            })
+
+        ds = Dataset.from_list(tokenized_data)
+        ds.save_to_disk(f"GHIST/ghist_samples_{t}")

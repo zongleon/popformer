@@ -145,6 +145,7 @@ class RealDataRandomIterator:
 
         # mask
         self.mask_dict = read_mask(bed_file) if bed_file is not None else None
+        print(self.mask_dict)
 
         self.rng = default_rng(seed)
 
@@ -181,17 +182,29 @@ class RealDataRandomIterator:
 
         return i # exclusive
 
-    def real_region(self, neg1, region_len):
+    def real_region(self, neg1, region_len, start_idx=None):
         # inclusive
-        start_idx = self.rng.integers(0, self.num_snps - global_vars.NUM_SNPS)
+        recursive = True
+        if start_idx is None:
+            start_idx = self.rng.integers(0, self.num_snps - global_vars.NUM_SNPS)
+            recursive = False
         #print('start idx', start_idx)
 
         if region_len:
             end_idx = self.find_end(start_idx)
             if end_idx == -1:
-                return self.real_region(neg1, region_len) # try again
+                if recursive:
+                    return self.real_region(neg1, region_len, start_idx=start_idx) # try again
+                else:
+                    return None
+
         else:
             end_idx = start_idx + global_vars.NUM_SNPS # exclusive
+            if end_idx >= self.num_snps:
+                if recursive:
+                    return self.real_region(neg1, region_len) # try again
+                else:
+                    return None
 
         # make sure we don't span two chroms
         start_chrom = self.chrom_all[start_idx]
@@ -199,7 +212,10 @@ class RealDataRandomIterator:
 
         if start_chrom != end_chrom:
             #print("bad chrom", start_chrom, end_chrom)
-            return self.real_region(neg1, region_len) # try again
+            if recursive:
+                return self.real_region(neg1, region_len) # try again
+            else:
+                return None
 
         hap_data = self.haps_all[start_idx:end_idx, :]
         start_base = self.pos_all[start_idx]
@@ -221,7 +237,9 @@ class RealDataRandomIterator:
             return after #, [chrom, start_base, end_base]
 
         # try again if not in accessible region
-        return self.real_region(neg1, region_len)
+        if recursive:
+            return self.real_region(neg1, region_len)
+        return None
 
     def real_batch(self, batch_size = global_vars.BATCH_SIZE, neg1=True,
         region_len=False):

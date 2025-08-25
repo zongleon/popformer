@@ -459,5 +459,3 @@ STATS = [f'SFS_{i}' for i in range(0, 10)] + \
 EXTRA_STATS = ['ihs_maxabs', "tajimas_d", 'garud_h1', 'garud_h12', 'garud_h123', 'garud_h2_h1']
 
 ALL_STATS = STATS + EXTRA_STATS
-
-# ALL_STATS = ALL_STATS + ["ones"]

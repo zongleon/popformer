@@ -99,11 +99,15 @@ class HapbertaForSequenceClassification(RobertaForSequenceClassification):
 
         loss = None
         if labels is not None:
-            loss_fct = torch.nn.CrossEntropyLoss()
-            # print softmax'd logits and labels
-            # print(logits.softmax(dim=-1), labels)
-            # print(logits, labels)
-            loss = loss_fct(logits.view(-1, self.config.num_labels), labels.view(-1))
+            if self.config.num_labels == 1:
+                loss_fct = torch.nn.MSELoss()
+                loss = loss_fct(logits.view(-1), labels.view(-1))
+            else:
+                loss_fct = torch.nn.CrossEntropyLoss()
+                # print softmax'd logits and labels
+                # print(logits.softmax(dim=-1), labels)
+                # print(logits, labels)
+                loss = loss_fct(logits.view(-1, self.config.num_labels), labels.view(-1))
 
         return {
             "loss": loss,
