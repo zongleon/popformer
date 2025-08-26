@@ -167,3 +167,4 @@ class HaploSimpleNormalDataCollator:
             "distances": distances,
             "labels": batch_labels,
         }
+

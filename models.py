@@ -25,10 +25,10 @@ class HapbertaForMaskedLM(RobertaForMaskedLM):
             attention_mask=attention_mask,
             distances=distances,
         )
-        
+
         sequence_output = outputs[0]
         prediction_scores = self.lm_head(sequence_output)
-        
+
         masked_lm_loss = None
         if labels is not None:
             # weight = torch.tensor(
@@ -36,7 +36,7 @@ class HapbertaForMaskedLM(RobertaForMaskedLM):
             # ).to(input_ids.device)
             loss_fct = torch.nn.CrossEntropyLoss()
             masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
-        
+
         return {
             "loss": masked_lm_loss,
             "logits": prediction_scores,
@@ -77,7 +77,7 @@ class HapbertaForSequenceClassification(RobertaForSequenceClassification):
         super().__init__(config)
         if getattr(config, "axial", False):
             self.roberta = HapbertaAxialModel(config, add_pooling_layer=False)
-        
+
         # test a simple logistic regression head
         self.classifier = HapbertaClassificationHead(config)
         self.post_init()
@@ -133,7 +133,7 @@ class HapbertaAxialModel(RobertaModel):
         batch_size, n_haps, n_snps = input_ids.size()
         input_shape = (batch_size, n_haps * n_snps)  # Flatten for embeddings
         device = input_ids.device
-      
+
         # Flatten input_ids for embedding lookup
         flattened_input_ids = input_ids.view(batch_size, -1)
         token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
@@ -143,7 +143,7 @@ class HapbertaAxialModel(RobertaModel):
             input_ids=flattened_input_ids,
             token_type_ids=token_type_ids,
         )
-        
+
         embedding_output = embedding_output.view(batch_size, n_haps, n_snps, -1)
         # print(embedding_output.size())
 
@@ -156,9 +156,9 @@ class HapbertaAxialModel(RobertaModel):
             attention_mask=attention_mask,
             distances=distances,
         )
-        
+
         sequence_output = encoder_outputs[0]
-        
+
         # For pooling, we might want to pool over haplotypes or use a different strategy
         # mean over haplotypes
         # pooled_output = sequence_output.mean(dim=1)
@@ -172,3 +172,4 @@ class HapbertaAxialModel(RobertaModel):
             last_hidden_state=sequence_output,
             pooler_output=pooled_output,
         )
+

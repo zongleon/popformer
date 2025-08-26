@@ -43,17 +43,17 @@ training_args = TrainingArguments(
     overwrite_output_dir=True,
     num_train_epochs=3,
     # max_steps=50,
-    per_device_train_batch_size=4,
-    per_device_eval_batch_size=4,
+    per_device_train_batch_size=32,
+    per_device_eval_batch_size=32,
     warmup_ratio=0.1,
     weight_decay=0.01,
     logging_dir="./logs",
-    logging_steps=100,
-    save_steps=500,
-    eval_steps=500,
+    logging_steps=20,
+    save_steps=100,
+    eval_steps=100,
     eval_strategy="steps",
     save_strategy="steps",
-    save_total_limit=2,
+    save_total_limit=3,
     load_best_model_at_end=True,
     metric_for_best_model="eval_loss",
     greater_is_better=False,
@@ -78,4 +78,5 @@ trainer = Trainer(
 trainer.train()
 
 # save the final model
-trainer.save_model("./models/hapberta2d_simple")
+trainer.save_model("./models/hapberta2d")
+

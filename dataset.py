@@ -144,17 +144,17 @@ def popiter(hap_sample: np.ndarray, dist_sample: np.ndarray):
 def compute_token_distances_simple(hap: np.ndarray, distances: np.ndarray):
     """
     Compute distances from middle of one token to middle of the next token.
-    
+
     Args:
         hap: Array representation of haplotype
         distances: Array of distances between consecutive SNPs
         tokenizer: Trained tokenizer
-    
+
     Returns:
         Tuple of encodings, distances between token middles
     """
     return (
-        np.concatenate([[2], hap, [3]]), 
+        np.concatenate([[2], hap, [3]]),
         np.concatenate([[0], distances, [0]])
     )
 
@@ -177,7 +177,6 @@ if __name__ == "__main__":
                 pop=pop, n_samples=n_samples, seed=0
             )
             save_data(pop, samples)
-        
     elif mode == "runsimple":
         # Now compute tokenized data with distances
         tokenized_data = []
@@ -193,7 +192,6 @@ if __name__ == "__main__":
                     encodings, token_distances = compute_token_distances_simple(hap, distances)
 
                     encodings_all.append(encodings)
-                
                 # save list of lists of (n_haps, n_input_ids) and (n_haps, n_distances)
                 tokenized_data.append({
                     'input_ids': encodings_all,
@@ -206,7 +204,6 @@ if __name__ == "__main__":
         dataset.save_to_disk(f"dataset/tokenized")
 
     elif mode == "runrealsim":
-        
         tokenized_data = []
 
         for pop in ["CEU", "CHB", "YRI"]:
@@ -216,7 +213,6 @@ if __name__ == "__main__":
             subset = np.random.choice(samples.shape[0], n_samples, replace=False)
             samples = samples[subset]
             labels = labels[subset]
-            
             haps = samples[..., 0].astype(np.int8)
             haps[haps == -1] = 0
             distances = samples[..., 1].astype(np.float32) * global_vars.L
@@ -257,7 +253,6 @@ if __name__ == "__main__":
                         encodings, token_distances = compute_token_distances_simple(hap.T,
                                                                                     dist)
                         encodings_all.append(encodings)
-                            
                     # save list of lists of (n_haps, n_input_ids) and (n_haps, n_distances)
                     tokenized_data.append({
                         'input_ids': encodings_all,
