@@ -1,0 +1,11 @@
+accelerate
+datasets
+matplotlib
+msprime
+pandas
+scikit-allel
+scikit-learn
+scipy
+seaborn
+tqdm
+transformers

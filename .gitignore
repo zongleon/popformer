@@ -1,9 +1,11 @@
 __pycache__
 
 dataset*/
+GHIST/
 1000g/
 models/
 tokenizer/
 
 *.pth
 *.pdf
+*.out

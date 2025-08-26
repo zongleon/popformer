@@ -11,7 +11,7 @@ def sweep(t: str):
 
     model = HapbertaForSequenceClassification.from_pretrained(
         "models/hapberta2d_sel_binary/checkpoint-1000",
-        # num_labels=1
+        num_labels=2
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # device = "cpu"
@@ -73,6 +73,6 @@ def plot(t: str):
 
 if __name__ == "__main__":
     # t = "singlesweep.growth_bg"
-    t = "singlesweep"
+    t = "multisweep"
     sweep(t)
     plot(t)

@@ -3,9 +3,20 @@ import torch
 from models import HapbertaForMaskedLM, HapbertaForSequenceClassification
 from datasets import load_from_disk
 from collators import HaploSimpleDataCollator, HaploSimpleNormalDataCollator
+from scipy.spatial.distance import cdist
 
+def test_model():
+    print("=" * 30)
+    print("Test: Show model")
+    model = HapbertaForSequenceClassification.from_pretrained(
+        "./models/hapberta2d_realsim/"
+    )
 
+    print(model)
 def test_masked_lm():
+    print("=" * 30)
+    print("Test: Masked performance")
+    # Load data
     model = HapbertaForMaskedLM.from_pretrained(
         "./models/hapberta2d/"
     )
@@ -21,7 +32,10 @@ def test_masked_lm():
     # print masked haps and unmask token
     haps = inputs["input_ids"].numpy()
 
+    print("Example input haps:")
     print(haps)
+
+    print("Counts of masked tokens:")
     print({i: (inputs["labels"][haps == 4] == i).sum() for i in range(7)})
 
     # forward
@@ -32,18 +46,23 @@ def test_masked_lm():
 
     # print the count of predicted labels (vocab size 7)
     counts = outputs["logits"].argmax(dim=-1).cpu().numpy()
+    print("Example predicted tokens:")
     print(counts)
-    print({i: (counts == i).sum() for i in range(7)})
+    print("Counts of predicted tokens:")
+    print({i: (counts[haps == 4] == i).sum() for i in range(7)})
 
     # print the real vs predicted mask labels
     lbls = inputs["labels"][haps == 4].numpy()
     predlbls = counts[haps == 4]
 
+    print("Comparing first few tokens:")
     print(lbls[:20])
     print(predlbls[:20])
     print((lbls == predlbls).mean())
 
 def test_realsim_ft():
+    print("=" * 30)
+    print("Test: Finetuning on real/sim task")
     model = HapbertaForSequenceClassification.from_pretrained(
         "./models/hapberta2d_realsim/"
     )
@@ -57,16 +76,20 @@ def test_realsim_ft():
 
     haps = inputs["input_ids"].numpy()
 
+    print("Example input haps:")
     print(haps[0])
     print("Labels: ", inputs["labels"].numpy())
 
     outputs = model(**inputs)
     preds = outputs["logits"].argmax(dim=-1).cpu().numpy()
+    print("Output logits")
     print(outputs["logits"])
-    print(preds)
+    print("Pred labels: ", preds)
 
 
 def test_sel_ft():
+    print("=" * 30)
+    print("Test: Finetuning on selection task")
     model = HapbertaForSequenceClassification.from_pretrained(
         "./models/hapberta2d_sel/",
         num_labels=1,
@@ -81,15 +104,109 @@ def test_sel_ft():
 
     haps = inputs["input_ids"].numpy()
 
+    print("Example input haps:")
     print(haps[0])
     print("Labels: ", inputs["labels"].numpy())
 
     outputs = model(**inputs)
+    print("Output logits")
     print(outputs["logits"].detach())
     # print(preds)
 
 
+def test_baseline():
+    print("=" * 30)
+    print("Test: Baseline column frequency approach")
+    
+    # Load data
+    ds = load_from_disk("dataset/tokenized")
+    collator = HaploSimpleDataCollator()
+    
+    inputs = collator([ds[0]])
+    haps = inputs["input_ids"].numpy()
+    
+    print("Example input haps:")
+    print(haps)
+    
+    masked_positions = (haps == 4)
+    baseline_predictions = np.copy(haps)
+    
+    for i in range(haps.shape[0]):  # batch dimension
+        for hap in range(haps.shape[1]):  # sequence dimension
+            for snp in range(haps.shape[2]):
+                if haps[i, hap, snp] == 4:
+                    baseline_predictions[i, hap, snp] = np.bincount(haps[i, :, snp][haps[i, :, snp] != 4]).argmax()
+
+    print("Baseline predicted tokens:")
+    print(baseline_predictions)
+    
+    # Compare with ground truth
+    lbls = inputs["labels"][masked_positions].numpy()
+    pred_lbls = baseline_predictions[masked_positions]
+    
+    print("Comparing first few tokens:")
+    print("True:     ", lbls[:20])
+    print("Baseline: ", pred_lbls[:20])
+    print("Baseline accuracy:", (lbls == pred_lbls).mean())
+    
+    print("Counts of true tokens:")
+    print({i: (lbls == i).sum() for i in range(7)})
+    print("Counts of baseline predicted tokens:")
+    print({i: (pred_lbls == i).sum() for i in range(7)})
+
+
+def test_baseline2():
+    print("=" * 30)
+    print("Test: Baseline nearest neighbor approach")
+    
+    # Load data
+    ds = load_from_disk("dataset/tokenized")
+    collator = HaploSimpleDataCollator()
+    
+    inputs = collator([ds[0]])
+    haps = inputs["input_ids"].numpy()
+    
+    print("Example input haps:")
+    print(haps)
+    
+    masked_positions = (haps == 4)
+    baseline_predictions = np.copy(haps)
+    
+    # get most similar sequences (excluding masks)
+    for i in range(haps.shape[0]):  # batch dimension
+        dists = cdist(haps[i, :, :], haps[i, :, :], metric="hamming")
+        for hap in range(haps.shape[1]):  # sequence dimension
+            for snp in range(haps.shape[2]):
+                if haps[i, hap, snp] == 4:
+                    # only copy if not masked
+                    most_similar = dists[hap].argsort()
+                    idx = 0
+                    while baseline_predictions[i, hap, snp] == 4:
+                        baseline_predictions[i, hap, snp] = haps[i, most_similar[idx], snp]
+                        idx += 1
+
+    print("Baseline predicted tokens:")
+    print(baseline_predictions)
+    
+    # Compare with ground truth
+    lbls = inputs["labels"][masked_positions].numpy()
+    pred_lbls = baseline_predictions[masked_positions]
+    
+    print("Comparing first few tokens:")
+    print("True:     ", lbls[:20])
+    print("Baseline: ", pred_lbls[:20])
+    print("Baseline accuracy:", (lbls == pred_lbls).mean())
+    
+    print("Counts of true tokens:")
+    print({i: (lbls == i).sum() for i in range(7)})
+    print("Counts of baseline predicted tokens:")
+    print({i: (pred_lbls == i).sum() for i in range(7)})
+
+
 if __name__ == "__main__":
+    test_model()
+    # test_baseline()
+    # test_baseline2()
     # test_masked_lm()
     # test_realsim_ft()
-    test_sel_ft()
+    # test_sel_ft()
