@@ -5,7 +5,7 @@ from datasets import load_from_disk
 from collators import HaploSimpleDataCollator
 
 # load dataset
-dataset = load_from_disk("dataset/tokenized")
+dataset = load_from_disk("dataset2/tokenized")
 
 # Split dataset
 dataset = dataset.train_test_split(test_size=0.1)
@@ -35,7 +35,7 @@ model = HapbertaForMaskedLM(config)
 print(model)
 
 # data collator
-data_collator = HaploSimpleDataCollator()
+data_collator = HaploSimpleDataCollator(subsample=32)
 
 # training arguments
 training_args = TrainingArguments(
@@ -43,22 +43,21 @@ training_args = TrainingArguments(
     overwrite_output_dir=True,
     num_train_epochs=3,
     # max_steps=50,
-    per_device_train_batch_size=32,
-    per_device_eval_batch_size=32,
+    # use_cpu=True,
+    per_device_train_batch_size=2,
+    per_device_eval_batch_size=2,
     warmup_ratio=0.1,
     weight_decay=0.01,
     logging_dir="./logs",
-    logging_steps=20,
-    save_steps=100,
+    logging_steps=10,
+    save_steps=500,
     eval_steps=100,
     eval_strategy="steps",
     save_strategy="steps",
-    save_total_limit=3,
+    save_total_limit=2,
     load_best_model_at_end=True,
     metric_for_best_model="eval_loss",
     greater_is_better=False,
-    dataloader_pin_memory=True,
-    dataloader_num_workers=4,
     # fp16=True,
     bf16=True,
     remove_unused_columns=False,

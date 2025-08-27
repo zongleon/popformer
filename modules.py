@@ -2,9 +2,7 @@ from typing import Optional, Union
 import math
 import torch
 import torch.nn as nn
-from transformers import Cache, EncoderDecoderCache, apply_chunking_to_forward
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
-from transformers.models.roberta.modeling_roberta import RobertaAttention, RobertaEncoder, RobertaLayer
 
 class HapbertaAxialEncoder(nn.Module):
     def __init__(self, config):
@@ -64,14 +62,6 @@ class HapbertaAxialLayer(nn.Module):
         # Reshape for axial attention: (n_haps, n_snps, batch_size, hidden_size)
         x = hidden_states.permute(1, 2, 0, 3)
         
-        # Create padding mask from attention mask
-        self_attn_padding_mask = None
-        # if attention_mask is not None:
-            # attention_mask: (batch_size, n_haps, n_snps)
-            # Convert to padding mask: (batch_size, n_haps, n_snps) where 0 = padded
-            # print(attention_mask)
-            # self_attn_padding_mask = (attention_mask == 0).permute(1, 2, 0)  # (n_haps, n_snps, batch_size)
-        
         # Row attention (over haplotypes for each SNP)
         x, row_attn = self.row_attn(
             x,
@@ -81,7 +71,6 @@ class HapbertaAxialLayer(nn.Module):
         # Column attention (over SNPs for each haplotype)
         x, col_attn = self.col_attn(
             x,
-            distances, 
         )
         
         x = self.ff_layer(x)
@@ -101,15 +90,13 @@ class RowSelfAttention(nn.Module):
         embed_dim,
         num_heads,
         dropout=0.0,
-        max_tokens_per_msa: int = 2 ** 16,
     ):
         super().__init__()
         self.num_heads = num_heads
         self.dropout = dropout
         self.head_dim = embed_dim // num_heads
         self.scaling = self.head_dim ** -0.5
-        self.max_tokens_per_msa = max_tokens_per_msa
-        self.attn_shape = "nrhij"
+        self.attn_shape = "hnij"
 
         self.k_proj = nn.Linear(embed_dim, embed_dim)
         self.v_proj = nn.Linear(embed_dim, embed_dim)
@@ -128,8 +115,6 @@ class RowSelfAttention(nn.Module):
         x,
         distances,
         scaling: float,
-        self_attn_mask=None,
-        self_attn_padding_mask=None,
     ):
         num_rows, num_cols, batch_size, embed_dim = x.size()
         q = self.q_proj(x).view(
@@ -139,25 +124,8 @@ class RowSelfAttention(nn.Module):
             num_rows, num_cols, batch_size, self.num_heads, self.head_dim
         )
         q *= scaling
-        if self_attn_padding_mask is not None:
-            # Zero out any padded aligned positions - this is important since
-            # we take a sum across the alignment axis.
-            # q *= 1 - self_attn_padding_mask.permute(1, 2, 0).unsqueeze(3).unsqueeze(
-            #     4
-            # ).to(q)
-            q *= (~self_attn_padding_mask).unsqueeze(-1).unsqueeze(-1).to(q)
-
+        
         attn_weights = torch.einsum(f"rinhd,rjnhd->{self.attn_shape}", q, k)
-
-        if self_attn_mask is not None:
-            raise NotImplementedError
-            # Mask Size: [B x R x C], Weights Size: [H x B x C x C]
-
-        if self_attn_padding_mask is not None:
-            attn_weights = attn_weights.masked_fill(
-                self_attn_padding_mask[:, 0].unsqueeze(0).unsqueeze(2),
-                -10000,
-            )
 
         # add distance bias
         relative_pos_bias = self.dist_bias(distances)
@@ -183,14 +151,12 @@ class RowSelfAttention(nn.Module):
         self,
         x,
         distances,
-        self_attn_mask=None,
-        self_attn_padding_mask=None,
     ):
         num_rows, num_cols, batch_size, embed_dim = x.size()
         
         scaling = self.align_scaling(x)
         attn_weights = self.compute_attention_weights(
-            x, distances, scaling, self_attn_mask, self_attn_padding_mask
+            x, distances, scaling,
         )
         attn_probs = attn_weights.softmax(-1)
         attn_probs = self.dropout_module(attn_probs)
@@ -206,7 +172,6 @@ class ColumnSelfAttention(nn.Module):
         embed_dim,
         num_heads,
         dropout=0.0,
-        max_tokens_per_msa: int = 2 ** 16,
     ):
         super().__init__()
 
@@ -214,7 +179,6 @@ class ColumnSelfAttention(nn.Module):
         self.dropout = dropout
         self.head_dim = embed_dim // num_heads
         self.scaling = self.head_dim ** -0.5
-        self.max_tokens_per_msa = max_tokens_per_msa
 
         self.k_proj = nn.Linear(embed_dim, embed_dim)
         self.v_proj = nn.Linear(embed_dim, embed_dim)
@@ -226,9 +190,6 @@ class ColumnSelfAttention(nn.Module):
     def compute_attention_update(
         self,
         x,
-        distances,
-        self_attn_mask=None,
-        self_attn_padding_mask=None,
     ):
         num_rows, num_cols, batch_size, embed_dim = x.size()
         if num_rows == 1:
@@ -258,14 +219,6 @@ class ColumnSelfAttention(nn.Module):
 
             attn_weights = torch.einsum("icnhd,jcnhd->hcnij", q, k)
 
-            if self_attn_mask is not None:
-                raise NotImplementedError
-            if self_attn_padding_mask is not None:
-                attn_weights = attn_weights.masked_fill(
-                    self_attn_padding_mask.permute(2, 0, 1).unsqueeze(0).unsqueeze(3),
-                    -10000,
-                )
-
             attn_probs = attn_weights.softmax(-1)
             attn_probs = self.dropout_module(attn_probs)
             context = torch.einsum("hcnij,jcnhd->icnhd", attn_probs, v)
@@ -278,14 +231,11 @@ class ColumnSelfAttention(nn.Module):
     def forward(
         self,
         x,
-        distances,
-        self_attn_mask=None,
-        self_attn_padding_mask=None,
     ):
         num_rows, num_cols, batch_size, embed_dim = x.size()
     
         return self.compute_attention_update(
-            x, distances, self_attn_mask, self_attn_padding_mask
+            x,
         )
 
 
@@ -302,21 +252,22 @@ class RelativePosAttnBias(nn.Module):
         self.relative_attention_bias = nn.Embedding(
             self.num_buckets, self.num_heads
         )
+        log_buckets = torch.logspace(
+            0,
+            math.log10(self.max_distance),
+            self.num_buckets - 1
+        )
+        buckets = torch.cat([log_buckets])
+
+        self.register_buffer('buckets', buckets)
+    
     
     def _relative_position_bucket(self, distances):
         """Convert relative positions to bucket indices."""
-        abs_dist = distances.abs().float()
-        buckets = torch.zeros_like(abs_dist, dtype=torch.long)
-        nonzero = abs_dist >= 1
-        if nonzero.any():
-            log_ratio = torch.log(abs_dist[nonzero]) / (
-                torch.log(torch.tensor(self.max_distance, device=abs_dist.device, dtype=abs_dist.dtype))
-            )
-            log_buckets = (log_ratio * (self.num_buckets - 2)).long() + 1
-            log_buckets = torch.clamp(log_buckets, min=1, max=self.num_buckets - 1)
-            buckets[nonzero] = log_buckets
-        return buckets
-    
+        abs_dist = distances.abs()
+        bucket_indices = torch.bucketize(abs_dist, self.buckets, right=False)
+        return bucket_indices
+
     def forward(self, distances):
         """
         Args:
@@ -328,21 +279,12 @@ class RelativePosAttnBias(nn.Module):
         # Convert distances to relative position buckets
 
         # Get bias values
-        if distances.dim() == 3:
-            batch_size, seq_len, _ = distances.shape
-            relative_buckets = self._relative_position_bucket(distances)
-            bias = self.relative_attention_bias(relative_buckets)  # (batch_size, seq_len, seq_len, num_heads)
-            # print(bias.shape)
-            return bias.permute(0, 3, 1, 2)  # (batch_size, num_heads, seq_len, seq_len)
+        batch_size, seq_len, _ = distances.shape
+        relative_buckets = self._relative_position_bucket(distances)
+        bias = self.relative_attention_bias(relative_buckets)  # (batch_size, seq_len, seq_len, num_heads)
+        # print(bias.shape)
+        return bias.permute(3, 0, 1, 2)  # (num_heads, batch_size, seq_len, seq_len)
 
-        if distances.dim() == 4:
-            b, r, l, _ = distances.shape
-            flat = distances.view(b * r, l, l)
-            rel_buckets = self._relative_position_bucket(flat)
-            bias = self.relative_attention_bias(rel_buckets)  # (B*R,L,L,H)
-            bias = bias.permute(0, 3, 1, 2).view(b, r, self.num_heads, l, l)  # (B,R,H,L,L)
-            return bias
-        
 
 # other modules from git:facebookresearch/esm
 class FeedForwardNetwork(nn.Module):

@@ -1,6 +1,7 @@
 """
 Utilities for a dataset.
 """
+VERSION=2
 
 import os
 import argparse
@@ -29,7 +30,7 @@ BED_PATH = "/bigdata/smathieson/1000g-share/HDF5/20120824_strict_mask.bed"
 
 pop = None
 
-_OUTPUT_SAMPLES = "dataset/samples.npz"
+_OUTPUT_SAMPLES = f"dataset{VERSION}/samples.npz"
 
 def read_outfile(file: str) -> Generator:
     """
@@ -127,18 +128,10 @@ def load_data(pop: str, dir=None) -> np.ndarray:
 
     return samples
 
+
 def hapiter(hap_sample: np.ndarray):
     for hap in hap_sample:
         yield hap
-
-def popiter(hap_sample: np.ndarray, dist_sample: np.ndarray):
-    """
-    Create a population iterator from the samples with corresponding distances.
-    """
-    # sample like (n_haps, n_snps)
-    distances = dist_sample[0]
-    for hap in hap_sample:
-        yield hap, distances
 
 
 def compute_token_distances_simple(hap: np.ndarray, distances: np.ndarray):
@@ -181,27 +174,28 @@ if __name__ == "__main__":
         # Now compute tokenized data with distances
         tokenized_data = []
 
-        for pop in ["CEU", "CHB", "YRI"]:
-            samples = load_data(pop)
-            haps = samples[..., 0].astype(np.int8)
-            distances = samples[..., 1].astype(np.float32) * global_vars.L
+        def gen():
+            for pop in ["CEU", "CHB", "YRI"]:
+                samples = load_data(pop)
+                haps = samples[..., 0].astype(np.int8)
+                distances = samples[..., 1].astype(np.float32) * global_vars.L
 
-            for hap, dist in tqdm(zip(haps, distances), total=samples.shape[0]):
-                encodings_all = []
-                for hap, distances in popiter(hap, dist):
-                    encodings, token_distances = compute_token_distances_simple(hap, distances)
+                for hap, dist in tqdm(zip(haps, distances), total=samples.shape[0]):
+                    encodings_all = []
+                    for hap, distances in hapiter(hap):
+                        encodings, token_distances = compute_token_distances_simple(hap, dist[0])
 
-                    encodings_all.append(encodings)
-                # save list of lists of (n_haps, n_input_ids) and (n_haps, n_distances)
-                tokenized_data.append({
-                    'input_ids': encodings_all,
-                    'distances': token_distances,
-                    'pop': pop,
-                })
+                        encodings_all.append(encodings)
+                    # save list of lists of (n_haps, n_input_ids) and (n_haps, n_distances)
+                    yield {
+                        'input_ids': encodings_all,
+                        'distances': token_distances,
+                        'pop': pop,
+                    }
 
         # Save tokenized data
-        dataset = Dataset.from_list(tokenized_data)
-        dataset.save_to_disk(f"dataset/tokenized")
+        dataset = Dataset.from_generator(gen)
+        dataset.save_to_disk(f"dataset{VERSION}/tokenized")
 
     elif mode == "runrealsim":
         tokenized_data = []

@@ -1,6 +1,6 @@
 '''For collecting global values'''
 # section A: general -----------------------------------------------------------
-NUM_SNPS = 256       # number of seg sites, should be divisible by 4
+NUM_SNPS = 512       # number of seg sites, should be divisible by 4
 L = 50000           # heuristic to get enough SNPs for simulations (50,000 or fifty-thousand)
 BATCH_SIZE = 50
 

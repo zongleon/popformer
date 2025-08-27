@@ -68,7 +68,6 @@ class HaploSimpleDataCollator:
 
             batch_input_ids.append(input_ids_2d)
             batch_attention_masks.append(attention_masks_2d)
-            batch_distances.append([])
 
             # add a haplotype thats just <s> <pad> * max_n_snps </s>
             # haplotype = [self.tokenizer.bos_token_id] + [self.tokenizer.pad_token_id] * (max_n_snps - 2) + [self.tokenizer.eos_token_id]
@@ -78,8 +77,7 @@ class HaploSimpleDataCollator:
             # Vectorized cumulative distance matrix
             cumulative_dists = torch.cumsum(torch.tensor(ex["distances"]), dim=0)
             dist_matrix = torch.abs(cumulative_dists.unsqueeze(0) - cumulative_dists.unsqueeze(1))
-            batch_distances[idx].append(dist_matrix)
-            batch_distances[idx] = torch.stack(batch_distances[idx])
+            batch_distances.append(dist_matrix)
 
         # Convert to tensors: (batch, n_haps, n_snps)
         input_ids = torch.stack(batch_input_ids)

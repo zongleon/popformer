@@ -145,7 +145,7 @@ class RealDataRandomIterator:
 
         # mask
         self.mask_dict = read_mask(bed_file) if bed_file is not None else None
-        print(self.mask_dict)
+        # print(self.mask_dict)
 
         self.rng = default_rng(seed)
 
