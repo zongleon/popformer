@@ -18,7 +18,8 @@ class HapbertaForMaskedLM(RobertaForMaskedLM):
         # print("Bias:", lm_head.decoder.bias)
         # print("Weight std:", lm_head.decoder.weight.std(dim=1))
 
-    def forward(self, input_ids=None, distances=None, attention_mask=None, labels=None, **kwargs):
+    def forward(self, input_ids=None, distances=None, attention_mask=None, labels=None, 
+                return_hidden_states=False, **kwargs):
         # Pass distances through to the model
         outputs = self.roberta(
             input_ids=input_ids,
@@ -37,11 +38,16 @@ class HapbertaForMaskedLM(RobertaForMaskedLM):
             loss_fct = torch.nn.CrossEntropyLoss()
             masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
 
+        if return_hidden_states:
+            return {
+                "loss": masked_lm_loss,
+                "logits": prediction_scores,
+                "hidden_states": outputs[0],
+                # "attentions": self.roberta.encoder.layer[-1] else None,
+            }
         return {
             "loss": masked_lm_loss,
             "logits": prediction_scores,
-            # "hidden_states": outputs.hidden_states if hasattr(outputs, 'hidden_states') else None,
-            # "attentions": outputs.attentions if hasattr(outputs, 'attentions') else None,
         }
 
 
