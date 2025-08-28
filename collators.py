@@ -142,7 +142,6 @@ class HaploSimpleNormalDataCollator:
 
             batch_input_ids.append(input_ids_2d)
             batch_attention_masks.append(attention_masks_2d)
-            batch_distances.append([])
             
             if "label" in ex:
                 batch_labels.append(ex["label"])
@@ -150,8 +149,7 @@ class HaploSimpleNormalDataCollator:
             # Vectorized cumulative distance matrix
             cumulative_dists = torch.cumsum(torch.tensor(ex["distances"]), dim=0)
             dist_matrix = torch.abs(cumulative_dists.unsqueeze(0) - cumulative_dists.unsqueeze(1))
-            batch_distances[idx].append(dist_matrix)
-            batch_distances[idx] = torch.stack(batch_distances[idx])
+            batch_distances.append(dist_matrix)
 
         # Convert to tensors: (batch, n_haps, n_snps)
         input_ids = torch.stack(batch_input_ids)

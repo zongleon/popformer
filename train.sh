@@ -7,7 +7,7 @@
 #SBATCH --cpus-per-task=4               # Number of CPU cores per task
 #SBATCH --mem=32G                       # Memory allocation
 #SBATCH --gpus=4
-#SBATCH --time=3:00:00                  # Maximum runtime (hh:mm:ss)
+#SBATCH --time=4:00:00                  # Maximum runtime (hh:mm:ss)
 #SBATCH --exclude=dgx002,dgx018
 
 torchrun --nproc_per_node=4 train_2d.py

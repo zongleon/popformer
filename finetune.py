@@ -1,6 +1,7 @@
 import torch
 from models import HapbertaForSequenceClassification
 from transformers import TrainingArguments, Trainer
+import datasets
 from datasets import load_from_disk
 from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, mean_squared_error, r2_score, confusion_matrix
 from collators import HaploSimpleNormalDataCollator
@@ -23,7 +24,7 @@ elif MODE == "sel2":
     num_labels = 2
     typ = torch.long
 elif MODE == "pop":
-    dataset_path = "dataset/tokenized"
+    dataset_path = "dataset2/tokenized"
     output_path = "./models/hapberta2d_pop"
     num_labels = 3
     typ = torch.long
@@ -44,7 +45,7 @@ if MODE == "pop":
         example["label"] = lbl2id[example["pop"]]
         return example
 
-    dataset = dataset.map(process_pop)
+    dataset = dataset.map(process_pop, keep_in_memory=True)
 
 # Split dataset
 dataset = dataset.train_test_split(test_size=0.1)
@@ -56,15 +57,15 @@ model = HapbertaForSequenceClassification.from_pretrained("./models/hapberta2d",
                                                             num_labels=num_labels,
 )
 
-collator = HaploSimpleNormalDataCollator(label_dtype=typ)
+collator = HaploSimpleNormalDataCollator(subsample=32, label_dtype=typ)
 
 # training arguments
 training_args = TrainingArguments(
     output_dir=output_path,
     overwrite_output_dir=True,
-    num_train_epochs=10,
-    per_device_train_batch_size=32,
-    per_device_eval_batch_size=32,
+    num_train_epochs=3,
+    per_device_train_batch_size=16,
+    per_device_eval_batch_size=16,
     warmup_ratio=0.1,
     weight_decay=0.01,
     logging_dir="./logs",
@@ -77,11 +78,10 @@ training_args = TrainingArguments(
     load_best_model_at_end=True,
     metric_for_best_model="eval_loss",
     greater_is_better=False,
-    dataloader_pin_memory=True,
-    dataloader_num_workers=4,
     bf16=True,
+    
     remove_unused_columns=False,
-    learning_rate=3e-5,
+    learning_rate=1e-5,
 )
 
 def compute_metrics(eval_pred):
@@ -92,7 +92,8 @@ def compute_metrics(eval_pred):
             acc = accuracy_score(labels, preds)
             f1 = f1_score(labels, preds, average="micro")
             matr = confusion_matrix(labels, preds)
-            return {"accuracy": acc, "f1": f1, "matrix": matr.ravel().tolist()}
+            return {"accuracy": acc, "f1": f1, 
+                    "cm_0": matr[0].tolist(), "cm_1": matr[1].tolist(), "cm_2": matr[2].tolist()}
         else:
             acc = accuracy_score(labels, preds)
             f1 = f1_score(labels, preds)
