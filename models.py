@@ -91,7 +91,8 @@ class HapbertaForSequenceClassification(RobertaForSequenceClassification):
         # for param in self.roberta.parameters():
         #     param.requires_grad = False
 
-    def forward(self, input_ids=None, distances=None, attention_mask=None, labels=None, **kwargs):
+    def forward(self, input_ids=None, distances=None, attention_mask=None, labels=None, 
+                return_hidden_states=False, **kwargs):
         # Pass distances through to the model
         outputs = self.roberta(
             input_ids=input_ids,
@@ -115,6 +116,13 @@ class HapbertaForSequenceClassification(RobertaForSequenceClassification):
                 # print(logits, labels)
                 loss = loss_fct(logits.view(-1, self.config.num_labels), labels.view(-1))
 
+        if return_hidden_states:
+            return {
+                "loss": loss,
+                "logits": logits,
+                "hidden_states": output,
+                # "attentions": self.roberta.encoder.layer[-1] else None,
+            }
         return {
             "loss": loss,
             "logits": logits,

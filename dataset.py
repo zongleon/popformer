@@ -1,27 +1,22 @@
 """
 Utilities for a dataset.
 """
-VERSION=2
 
-import os
 import argparse
-from time import sleep
+import os
+
 import numpy as np
+from datasets import Dataset
 from tqdm import tqdm
 
-from tokenizers import Tokenizer
-from tokenizers.models import BPE
-from tokenizers.trainers import BpeTrainer
-
-from datasets import Dataset
-
 from pg_gan import global_vars
-from pg_gan.real_data_random import RealDataRandomIterator
 from pg_gan.generator import Generator
+from pg_gan.global_vars import DEFAULT_SEED, NUM_SNPS
+from pg_gan.real_data_random import RealDataRandomIterator
 from pg_gan.ss_helpers import parse_output
 from pg_gan.util import parse_args, process_opts
-from pg_gan.global_vars import DEFAULT_SEED, NUM_SNPS
 
+VERSION=2
 OUTFILE_PATH = "outfiles/{pop}/{pop}_{seed}_{model}.out"
 GENOME_PATH = (
     "/bigdata/smathieson/1000g-share/HDF5/{pop}.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.h5"
@@ -156,7 +151,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process dataset")
     parser.add_argument("mode", choices=["gen",
                                          "runsimple", "runrealsim", "runsel", "runsel2",
-                                         "ghist"], 
+                                         "ghist", "admix"], 
                                          help="Mode to run")
     parser.add_argument("n_samples", type=int, nargs="?", default=1000, help="Number of samples")
     args = parser.parse_args()
@@ -227,7 +222,7 @@ if __name__ == "__main__":
 
         # Save tokenized data
         dataset = Dataset.from_list(tokenized_data)
-        dataset.save_to_disk(f"dataset/tokenizedft")
+        dataset.save_to_disk("dataset/tokenizedft")
     elif mode == "runsel":
         tokenized_data = []
 
@@ -256,7 +251,7 @@ if __name__ == "__main__":
 
         # Save tokenized data
         dataset = Dataset.from_list(tokenized_data)
-        dataset.save_to_disk(f"dataset/tokenizedsel")
+        dataset.save_to_disk("dataset/tokenizedsel")
     elif mode == "runsel2":
         tokenized_data = []
 
@@ -286,7 +281,7 @@ if __name__ == "__main__":
 
         # Save tokenized data
         dataset = Dataset.from_list(tokenized_data)
-        dataset.save_to_disk(f"dataset/tokenizedsel2")
+        dataset.save_to_disk("dataset/tokenizedsel2")
     elif mode == "ghist":
         t = "multisweep.growth_bg"
         it = get_iterator_ghist(f"GHIST/GHIST_2025_{t}.21.testing_process.h5", "GHIST/raw/21.accessible.bed")
@@ -324,3 +319,42 @@ if __name__ == "__main__":
 
         ds = Dataset.from_list(tokenized_data)
         ds.save_to_disk(f"GHIST/ghist_samples_{t}")
+    elif mode == "admix":
+        it = get_iterator_ghist("/bigdata/smathieson/1000g-share/HDF5/CEU.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.h5", 
+                                "/bigdata/smathieson/1000g-share/HDF5/20120824_strict_mask.bed")
+        n_snps = it.num_snps
+
+        # every 18 snps, sample a region
+        smps = []
+        pos = []
+        for i in tqdm(range(0, n_snps, 128)):
+            if n_samples is not None and i / 128 > n_samples:
+                break
+            region = it.real_region(neg1=False, region_len=False, start_idx=i)
+            if region is not None:
+                smps.append(region)
+                pos.append([it.chrom_all[i], it.pos_all[i]])
+
+        smps = np.array(smps)
+        pos = np.array(pos)
+        haps = smps[..., 0].astype(np.int8)
+        distances = smps[..., 1].astype(np.float32) * global_vars.L
+        
+        tokenized_data = []
+
+        for idx, (haps, dist, p) in enumerate(zip(haps, distances, pos)):
+            encodings_all = []
+            for hap in hapiter(haps):
+                encodings, token_distances = compute_token_distances_simple(hap,
+                                                                            dist[0])
+                encodings_all.append(encodings)
+                    
+            # save list of lists of (n_haps, n_input_ids) and (n_haps, n_distances)
+            tokenized_data.append({
+                'input_ids': encodings_all,
+                'distances': token_distances,
+                'pos': p
+            })
+
+        ds = Dataset.from_list(tokenized_data)
+        ds.save_to_disk("LAI/LAI_CEU_test")
