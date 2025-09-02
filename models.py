@@ -1,10 +1,11 @@
 from typing import Optional
 import torch
+import torch.nn as nn
 from transformers import RobertaForSequenceClassification
 from transformers.modeling_outputs import BaseModelOutputWithPoolingAndCrossAttentions
 from transformers.models.roberta.modeling_roberta import RobertaForMaskedLM, RobertaModel
 
-from modules import *
+from modules import HapbertaAxialEncoder
 
 class HapbertaForMaskedLM(RobertaForMaskedLM):
     """RobertaForMaskedLM that accepts distances in forward pass."""
@@ -18,13 +19,17 @@ class HapbertaForMaskedLM(RobertaForMaskedLM):
         # print("Bias:", lm_head.decoder.bias)
         # print("Weight std:", lm_head.decoder.weight.std(dim=1))
 
-    def forward(self, input_ids=None, distances=None, attention_mask=None, labels=None, 
-                return_hidden_states=False, **kwargs):
+    def forward(self, input_ids, distances, attention_mask, 
+                labels=None, 
+                return_hidden_states=False, 
+                return_attentions=False,
+                **kwargs):
         # Pass distances through to the model
         outputs = self.roberta(
             input_ids=input_ids,
             attention_mask=attention_mask,
             distances=distances,
+            return_attentions=return_attentions,
         )
 
         sequence_output = outputs[0]
@@ -32,18 +37,15 @@ class HapbertaForMaskedLM(RobertaForMaskedLM):
 
         masked_lm_loss = None
         if labels is not None:
-            # weight = torch.tensor(
-            #     [0.1707489937543869, 1.2902734279632568, 5.4285712242126465, 5.4285712242126465, 1, 1, 1]
-            # ).to(input_ids.device)
             loss_fct = torch.nn.CrossEntropyLoss()
             masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
 
-        if return_hidden_states:
+        if return_hidden_states or return_attentions:
             return {
                 "loss": masked_lm_loss,
                 "logits": prediction_scores,
-                "hidden_states": outputs[0],
-                # "attentions": self.roberta.encoder.layer[-1] else None,
+                "hidden_states": sequence_output if return_hidden_states else None,
+                "attentions": outputs[1] if return_attentions else None,
             }
         return {
             "loss": masked_lm_loss,
@@ -121,7 +123,6 @@ class HapbertaForSequenceClassification(RobertaForSequenceClassification):
                 "loss": loss,
                 "logits": logits,
                 "hidden_states": output,
-                # "attentions": self.roberta.encoder.layer[-1] else None,
             }
         return {
             "loss": loss,
@@ -143,6 +144,7 @@ class HapbertaAxialModel(RobertaModel):
         input_ids: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
         distances: Optional[torch.Tensor] = None,
+        return_attentions: bool = False,
     ):
         batch_size, n_haps, n_snps = input_ids.size()
         input_shape = (batch_size, n_haps * n_snps)  # Flatten for embeddings
@@ -169,6 +171,7 @@ class HapbertaAxialModel(RobertaModel):
             embedding_output,
             attention_mask=attention_mask,
             distances=distances,
+            return_attentions=return_attentions,
         )
 
         sequence_output = encoder_outputs[0]
@@ -177,6 +180,7 @@ class HapbertaAxialModel(RobertaModel):
         # mean over haplotypes
         # pooled_output = sequence_output.mean(dim=1)
         pooled_output = self.pooler(sequence_output) if self.pooler is not None else None
+        attentions = encoder_outputs[1] if return_attentions else None
         # if self.pooler is not None:
         #     # Simple pooling: take mean over haplotypes and first SNP
         #     pooled_input = sequence_output.mean(dim=1)[:, 0, :]  # (batch_size, hidden_size)
@@ -185,5 +189,6 @@ class HapbertaAxialModel(RobertaModel):
         return BaseModelOutputWithPoolingAndCrossAttentions(
             last_hidden_state=sequence_output,
             pooler_output=pooled_output,
+            attentions=attentions,
         )
 

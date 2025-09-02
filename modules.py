@@ -14,21 +14,32 @@ class HapbertaAxialEncoder(nn.Module):
         hidden_states: torch.Tensor,  # (batch_size, n_haps, n_snps, hidden_size)
         attention_mask: Optional[torch.FloatTensor] = None,
         distances: Optional[torch.FloatTensor] = None,
+        return_attentions: bool = False,
     ) -> Union[tuple[torch.Tensor], BaseModelOutputWithPastAndCrossAttentions]:
+
+        if return_attentions:
+            row_attns = []
+            col_attns = []
 
         for i, layer_module in enumerate(self.layer):
             layer_outputs = layer_module(
                 hidden_states,
                 attention_mask,
                 distances,
+                return_attentions=return_attentions,
             )
 
-            hidden_states = layer_outputs
+            hidden_states = layer_outputs[0]
+            
+            if return_attentions:
+                row_attns.append(layer_outputs[1])
+                col_attns.append(layer_outputs[2])
 
         hidden_states = self.layer_norm(hidden_states)
 
         return BaseModelOutputWithPastAndCrossAttentions(
             last_hidden_state=hidden_states,
+            attentions=(row_attns, col_attns) if return_attentions else None
         )
     
 
@@ -56,9 +67,17 @@ class HapbertaAxialLayer(nn.Module):
         hidden_states: torch.Tensor,  # (batch_size, n_haps, n_snps, hidden_size)
         attention_mask: Optional[torch.FloatTensor] = None,
         distances = None,
+        return_attentions = False,
     ) -> tuple[torch.Tensor]:
         batch_size, n_haps, n_snps, hidden_size = hidden_states.shape
         
+        # compute attention mask for all heads (roberta impl)
+        extended_attention_mask = None
+        if attention_mask is not None:
+            dtype = hidden_states.dtype
+            extended_attention_mask = attention_mask[None, :, :, :].to(dtype=dtype)
+            extended_attention_mask = (1.0 - extended_attention_mask) * torch.finfo(dtype).min
+
         # Reshape for axial attention: (n_haps, n_snps, batch_size, hidden_size)
         x = hidden_states.permute(1, 2, 0, 3)
         
@@ -66,6 +85,7 @@ class HapbertaAxialLayer(nn.Module):
         x, row_attn = self.row_attn(
             x,
             distances,
+            extended_attention_mask
         )
         
         # Column attention (over SNPs for each haplotype)
@@ -78,7 +98,9 @@ class HapbertaAxialLayer(nn.Module):
         # Reshape back: (batch_size, n_haps, n_snps, hidden_size)
         x = x.permute(2, 0, 1, 3)
         
-        return x
+        if return_attentions:
+            return x, row_attn, col_attn
+        return (x,)
 
 
 # from the msa-transformer repository
@@ -115,6 +137,7 @@ class RowSelfAttention(nn.Module):
         x,
         distances,
         scaling: float,
+        attn_mask: Optional[torch.FloatTensor] = None
     ):
         num_rows, num_cols, batch_size, embed_dim = x.size()
         q = self.q_proj(x).view(
@@ -126,6 +149,11 @@ class RowSelfAttention(nn.Module):
         q *= scaling
         
         attn_weights = torch.einsum(f"rinhd,rjnhd->{self.attn_shape}", q, k)
+
+        if attn_mask is not None:
+            # print(attn_weights.size())
+            # print(attn_mask.size())
+            attn_weights += attn_mask
 
         # add distance bias
         relative_pos_bias = self.dist_bias(distances)
@@ -151,12 +179,13 @@ class RowSelfAttention(nn.Module):
         self,
         x,
         distances,
+        attn_mask: Optional[torch.FloatTensor] = None
     ):
         num_rows, num_cols, batch_size, embed_dim = x.size()
         
         scaling = self.align_scaling(x)
         attn_weights = self.compute_attention_weights(
-            x, distances, scaling,
+            x, distances, scaling, attn_mask=attn_mask
         )
         attn_probs = attn_weights.softmax(-1)
         attn_probs = self.dropout_module(attn_probs)

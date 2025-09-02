@@ -2,9 +2,11 @@ __pycache__
 
 dataset*/
 GHIST/
+LAI/
 1000g/
 models/
 tokenizer/
+figs/
 
 *.pth
 *.pdf

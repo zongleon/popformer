@@ -182,19 +182,19 @@ class RealDataRandomIterator:
 
         return i # exclusive
 
-    def real_region(self, neg1, region_len, start_idx=None):
+    def real_region(self, neg1, region_len, start_idx=None, return_pos=False):
         # inclusive
-        recursive = True
+        recursive = False
         if start_idx is None:
             start_idx = self.rng.integers(0, self.num_snps - global_vars.NUM_SNPS)
-            recursive = False
+            recursive = True
         #print('start idx', start_idx)
 
         if region_len:
             end_idx = self.find_end(start_idx)
             if end_idx == -1:
                 if recursive:
-                    return self.real_region(neg1, region_len, start_idx=start_idx) # try again
+                    return self.real_region(neg1, region_len) # try again
                 else:
                     return None
 
@@ -234,6 +234,8 @@ class RealDataRandomIterator:
 
             after = util.process_gt_dist(hap_data, dist_vec,
                 region_len=region_len, real=True, neg1=neg1)
+            if return_pos:
+                return after, start_base, end_base, chrom
             return after #, [chrom, start_base, end_base]
 
         # try again if not in accessible region

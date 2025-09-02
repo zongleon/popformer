@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from models import HapbertaForMaskedLM, HapbertaForSequenceClassification
 from datasets import load_from_disk
-from collators import HaploSimpleDataCollator, HaploSimpleNormalDataCollator
+from collators import HaploSimpleDataCollator
 from scipy.spatial.distance import cdist
 
 def test_model():
@@ -18,10 +18,10 @@ def test_masked_lm():
     print("Test: Masked performance")
     # Load data
     model = HapbertaForMaskedLM.from_pretrained(
-        "./models/hapberta2d/"
+        "./models/hapberta2d/checkpoint-1000"
     )
 
-    ds = load_from_disk("dataset/tokenized")
+    ds = load_from_disk("dataset2/tokenized")
     collator = HaploSimpleDataCollator()
 
     # make a batch
@@ -119,7 +119,7 @@ def test_baseline():
     print("Test: Baseline column frequency approach")
     
     # Load data
-    ds = load_from_disk("dataset/tokenized")
+    ds = load_from_disk("dataset2/tokenized")
     collator = HaploSimpleDataCollator()
     
     inputs = collator([ds[0]])
@@ -135,7 +135,11 @@ def test_baseline():
         for hap in range(haps.shape[1]):  # sequence dimension
             for snp in range(haps.shape[2]):
                 if haps[i, hap, snp] == 4:
-                    baseline_predictions[i, hap, snp] = np.bincount(haps[i, :, snp][haps[i, :, snp] != 4]).argmax()
+                    cnts = np.bincount(haps[i, :, snp][haps[i, :, snp] != 4])
+                    if cnts.shape[0] == 0:
+                        # whole column was masked, predict 0
+                        cnts = np.array([0])
+                    baseline_predictions[i, hap, snp] = cnts.argmax()
 
     print("Baseline predicted tokens:")
     print(baseline_predictions)
@@ -160,7 +164,7 @@ def test_baseline2():
     print("Test: Baseline nearest neighbor approach")
     
     # Load data
-    ds = load_from_disk("dataset/tokenized")
+    ds = load_from_disk("dataset2/tokenized")
     collator = HaploSimpleDataCollator()
     
     inputs = collator([ds[0]])
@@ -182,6 +186,9 @@ def test_baseline2():
                     most_similar = dists[hap].argsort()
                     idx = 0
                     while baseline_predictions[i, hap, snp] == 4:
+                        if idx == haps.shape[1]:
+                            baseline_predictions[i, hap, snp] = 0
+                            break
                         baseline_predictions[i, hap, snp] = haps[i, most_similar[idx], snp]
                         idx += 1
 
@@ -204,10 +211,10 @@ def test_baseline2():
 
 
 if __name__ == "__main__":
-    test_model()
-    # test_baseline()
-    # test_baseline2()
-    # test_masked_lm()
+    # test_model()
+    test_baseline()
+    test_baseline2()
+    test_masked_lm()
     # test_realsim_ft()
     # test_sel_ft()
 

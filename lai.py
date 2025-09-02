@@ -1,31 +1,35 @@
+import sys
 import numpy as np
 import torch
 from models import HapbertaForSequenceClassification
-from collators import HaploSimpleNormalDataCollator
+from collators import HaploSimpleDataCollator
 from datasets import load_from_disk
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 def sweep():
-    data = load_from_disk(f"LAI/LAI_CEU_test")
+    data = load_from_disk("LAI/tokenized")
 
     model = HapbertaForSequenceClassification.from_pretrained(
         "models/hapberta2d_pop/checkpoint-500",
-        num_labels=3
+        torch_dtype=torch.bfloat16
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # device = "cpu"
     model.to(device)
     model.eval()
+    model.compile()
 
-    collator = HaploSimpleNormalDataCollator(subsample=32, label_dtype=torch.long)
+    collator = HaploSimpleDataCollator(subsample=32, mlm_probability=0)
 
-    batch_size = 8
+    batch_size = 16
     preds = []
 
     with torch.no_grad():
         for i in tqdm(range(0, len(data), batch_size)):
             batch_samples = [data[j] for j in range(i, min(i + batch_size, len(data)))]
+            if len(batch_samples) != batch_size:
+                continue
             batch = collator(batch_samples)
             # Move tensors to device
             for k in batch:
@@ -33,107 +37,104 @@ def sweep():
                     batch[k] = batch[k].to(device)
             
             output = model(batch["input_ids"], batch["distances"], batch["attention_mask"])
-            # pred = output["logits"].cpu().numpy().squeeze()
             
-            # instead, get softmax logits for class 1
-            pred = output["logits"].argmax(dim=-1).cpu().numpy().squeeze()
-            # print(pred)
+            pred = output["logits"].to(torch.float16).cpu().numpy().squeeze()
             preds.append(pred)
 
-    preds = np.concatenate(preds[:-1], axis=0)
-    np.savez(f"LAI/LAI_CEU_preds_test.npz", preds=preds, pos=data["pos"])
-
-def aggregate_predictions():
-    """Aggregate overlapping window predictions to get class proportions at each position"""
-    data = np.load(f"LAI/LAI_CEU_preds_test.npz")
-    preds = data["preds"]
-    pos = data["pos"]
-    
-    # pos is (n_windows, 2) with [chrom, start_pos]
-    chrom = pos[:, 0]
-    start_pos = pos[:, 1]
-    window_size = 512
-    
-    # Create a dictionary to store predictions for each position
-    position_preds = {}
-    
-    for i in range(len(preds)):
-        # Each window covers positions from start_pos to start_pos + window_size - 1
-        window_start = start_pos[i]
-        window_chrom = chrom[i]
-        pred_class = preds[i]
-        
-        # Add this prediction to all positions in the window
-        for pos_offset in range(window_size):
-            position = (window_chrom, window_start + pos_offset)
-            if position not in position_preds:
-                position_preds[position] = []
-            position_preds[position].append(pred_class)
-    
-    # Calculate proportions for each position
-    positions = sorted(position_preds.keys())
-    class_proportions = {0: [], 1: [], 2: []}
-    position_coords = []
-    
-    for pos in positions:
-        preds_at_pos = position_preds[pos]
-        total_preds = len(preds_at_pos)
-        
-        # Count each class
-        class_counts = {0: 0, 1: 0, 2: 0}
-        for pred in preds_at_pos:
-            class_counts[pred] += 1
-        
-        # Calculate proportions
-        for class_id in [0, 1, 2]:
-            proportion = class_counts[class_id] / total_preds
-            class_proportions[class_id].append(proportion)
-        
-        position_coords.append(pos)
-    
-    # Save aggregated results
-    np.savez(f"LAI/LAI_CEU_aggregated_preds.npz", 
-             positions=np.array(position_coords),
-             class0_prop=np.array(class_proportions[0]),
-             class1_prop=np.array(class_proportions[1]),
-             class2_prop=np.array(class_proportions[2]))
-    
-    return position_coords, class_proportions
+    # print(preds[-1])
+    preds = np.concatenate(preds, axis=0)
+    np.savez("LAI/LAI_preds.npz", preds=preds, start_pos=data["start_pos"], end_pos=data["end_pos"],
+             chrom=data["chrom"])
 
 def plot():
-    # Load aggregated data
-    try:
-        data = np.load(f"LAI/LAI_CEU_aggregated_preds.npz")
-        positions = data["positions"]
-        class0_prop = data["class0_prop"]
-        class1_prop = data["class1_prop"]
-        class2_prop = data["class2_prop"]
-    except FileNotFoundError:
-        print("Aggregated data not found, computing...")
-        positions, class_proportions = aggregate_predictions()
-        class0_prop = np.array(class_proportions[0])
-        class1_prop = np.array(class_proportions[1])
-        class2_prop = np.array(class_proportions[2])
+    data = np.load("LAI/LAI_preds.npz")
+    # preds = torch.softmax(torch.tensor(data["preds"]), dim=-1)[:, 1].numpy()
+    preds = data["preds"]
+    start_pos = data["start_pos"]
+    end_pos = data["end_pos"]
     
-    # Extract chromosome and position for plotting
-    chrom = positions[:, 0]
-    pos = positions[:, 1]
+    p = np.zeros((end_pos[-1] - start_pos[0], preds.shape[1]))
+    counts = np.zeros_like(p)
+    for i in range(len(preds)):
+        s = start_pos[i] - start_pos[0]
+        e = end_pos[i] - start_pos[0]
+        p[s:e] += preds[i]
+        counts[s:e] += 1
+    # Avoid division by zero
+    counts[counts == 0] = 1
+    p /= counts
+    ps = torch.softmax(torch.tensor(p), dim=-1).numpy()
+    pos = np.arange(start_pos[0], end_pos[-1])
+
+    # Only plot positions where all output logits were not zero
+    ps = np.ma.masked_where((p == 0), ps)
+
+    # Create figure with nice size
+    plt.figure(figsize=(12, 6))
     
-    # Plot class proportions
-    plt.figure(figsize=(12, 8))
-    plt.plot(pos, class0_prop, label='Class 0', alpha=0.7)
-    plt.plot(pos, class1_prop, label='Class 1', alpha=0.7)
-    plt.plot(pos, class2_prop, label='Class 2', alpha=0.7)
-    plt.xlabel('Genomic Position')
-    plt.ylabel('Class Proportion')
-    plt.title('Local Ancestry Inference - Class Proportions')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
+    # Stacked area chart for population probabilities
+    for i in range(3):
+        plt.plot(pos, ps[:, i], label=["CEU", "CHB", "YRI"][i], alpha=0.8)
+    
+    # Styling
+    plt.xlabel('Chromosome 1 Position (bp)')
+    plt.ylabel('Probability of population')
+    plt.title('Predicting ancestry')
+    plt.legend(title="Population", loc="upper right")
+    
+    # Add grid for better readability
+    plt.grid(True, alpha=0.3, linestyle='--')
+    
+    # Format x-axis to show positions in a readable format
+    plt.ticklabel_format(style='plain', axis='x', scilimits=(0,0))
+    
+    # Adjust layout to prevent label cutoff
     plt.tight_layout()
-    plt.savefig('LAI/LAI_CEU_class_proportions.png', dpi=300)
-    plt.show()
+    
+    # Save the plot
+    plt.savefig("LAI/fig3.png", dpi=300, bbox_inches='tight')
+
+
+def select(t: str, threshold: float = 0.2):
+    data = np.load(f"GHIST/ghist_preds2_{t}.npz")
+    preds = torch.softmax(torch.tensor(data["preds"]), dim=-1)[:, 1].numpy()
+    start_pos = data["start_pos"]
+    end_pos = data["end_pos"]
+
+    # Compute average prediction per position as in plot()
+    p = np.zeros((end_pos[-1] - start_pos[0]))
+    counts = np.zeros_like(p)
+    for i in range(len(preds)):
+        s = start_pos[i] - start_pos[0]
+        e = end_pos[i] - start_pos[0]
+        p[s:e] += preds[i]
+        counts[s:e] += 1
+    counts[counts == 0] = 1
+    avg_pred = p / counts
+    pos = np.arange(start_pos[0], end_pos[-1])
+
+    # Find contiguous ranges where avg_pred > threshold
+    above = avg_pred > threshold
+    ranges = []
+    in_range = False
+    for i, flag in enumerate(above):
+        if flag and not in_range:
+            range_start = pos[i]
+            in_range = True
+        elif not flag and in_range:
+            range_end = pos[i-1] + 1  # end is exclusive
+            ranges.append((range_start, range_end))
+            in_range = False
+    if in_range:
+        ranges.append((range_start, pos[-1]+1))
+
+    # Output the ranges
+    print(f"(avg_pred > {threshold})")
+    for r in ranges:
+        print(f"21\t{r[0]}\t{r[1]}".expandtabs(4))
+
 
 if __name__ == "__main__":
-    sweep()
-    aggregate_predictions()
+    # sweep()
     plot()
+    # select(t, 0.2)

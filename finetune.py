@@ -1,10 +1,9 @@
 import torch
 from models import HapbertaForSequenceClassification
-from transformers import TrainingArguments, Trainer
-import datasets
+from transformers import RobertaConfig, TrainingArguments, Trainer
 from datasets import load_from_disk
 from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, mean_squared_error, r2_score, confusion_matrix
-from collators import HaploSimpleNormalDataCollator
+from collators import HaploSimpleDataCollator
 
 MODE = "pop"
 
@@ -14,18 +13,18 @@ if MODE == "realsim":
     num_labels = 2
     typ = torch.long
 elif MODE == "sel":
-    dataset_path = "dataset/tokenizedsel"
+    dataset_path = "dataset2/tokenizedsel"
     output_path = "./models/hapberta2d_sel"
     num_labels = 1 # continuous
     typ = torch.float32
 elif MODE == "sel2":
-    dataset_path = "dataset/tokenizedsel2"
+    dataset_path = "dataset2/tokenizedsel2"
     output_path = "./models/hapberta2d_sel_binary"
     num_labels = 2
     typ = torch.long
 elif MODE == "pop":
     dataset_path = "dataset2/tokenized"
-    output_path = "./models/hapberta2d_pop"
+    output_path = "./models/hapberta2d_pop_from_init"
     num_labels = 3
     typ = torch.long
 else:
@@ -52,26 +51,41 @@ dataset = dataset.train_test_split(test_size=0.1)
 train_dataset = dataset["train"]
 eval_dataset = dataset["test"]
 
-model = HapbertaForSequenceClassification.from_pretrained("./models/hapberta2d",
-                                                            classifier_dropout=0,
-                                                            num_labels=num_labels,
-)
+# model = HapbertaForSequenceClassification.from_pretrained("./models/hapberta2d",
+#                                                             classifier_dropout=0,
+#                                                             num_labels=num_labels,
+# )
+model = HapbertaForSequenceClassification(RobertaConfig(
+    vocab_size=6,
+    hidden_size=768,
+    num_hidden_layers=12,
+    num_attention_heads=12,
+    intermediate_size=3072,
+    max_position_embeddings=512,
+    position_embedding_type="haplo",
+    axial=True,
+    bos_token_id=2,
+    eos_token_id=3,
+    pad_token_id=5,
+    num_labels=num_labels,
+    classifier_dropout=0
+))
 
-collator = HaploSimpleNormalDataCollator(subsample=32, label_dtype=typ)
+collator = HaploSimpleDataCollator(subsample=32, mlm_probability=0, label_dtype=typ)
 
 # training arguments
 training_args = TrainingArguments(
     output_dir=output_path,
     overwrite_output_dir=True,
-    num_train_epochs=3,
-    per_device_train_batch_size=16,
-    per_device_eval_batch_size=16,
+    num_train_epochs=10,
+    per_device_train_batch_size=2,
+    per_device_eval_batch_size=2,
     warmup_ratio=0.1,
     weight_decay=0.01,
     logging_dir="./logs",
     logging_steps=100,
     save_steps=500,
-    eval_steps=100,
+    eval_steps=500,
     eval_strategy="steps",
     save_strategy="steps",
     save_total_limit=2,
@@ -79,7 +93,8 @@ training_args = TrainingArguments(
     metric_for_best_model="eval_loss",
     greater_is_better=False,
     bf16=True,
-    
+    torch_compile=True,
+    ddp_find_unused_parameters=False,
     remove_unused_columns=False,
     learning_rate=1e-5,
 )

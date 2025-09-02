@@ -3,6 +3,7 @@ from transformers import Trainer, TrainingArguments
 from models import HapbertaForMaskedLM
 from datasets import load_from_disk
 from collators import HaploSimpleDataCollator
+# import numpy as np
 
 # load dataset
 dataset = load_from_disk("dataset2/tokenized")
@@ -11,8 +12,6 @@ dataset = load_from_disk("dataset2/tokenized")
 dataset = dataset.train_test_split(test_size=0.1)
 train_dataset = dataset["train"]
 eval_dataset = dataset["test"]
-
-print(train_dataset)
 
 # model configuration
 config = RobertaConfig(
@@ -26,16 +25,18 @@ config = RobertaConfig(
     axial=True,
     bos_token_id=2,
     eos_token_id=3,
-    pad_token_id=4,
+    pad_token_id=5,
 )
 
 # Create model for masked LM
 model = HapbertaForMaskedLM(config)
 
-print(model)
-
 # data collator
 data_collator = HaploSimpleDataCollator(subsample=32)
+
+# ex = data_collator([train_dataset[0]])
+# print(ex["input_ids"][0])
+# np.savetxt("test.txt", ex["input_ids"][0].cpu().numpy(), fmt="%d")
 
 # training arguments
 training_args = TrainingArguments(
@@ -44,8 +45,8 @@ training_args = TrainingArguments(
     num_train_epochs=10,
     # max_steps=50,
     # use_cpu=True,
-    per_device_train_batch_size=16,
-    per_device_eval_batch_size=16,
+    per_device_train_batch_size=2,
+    per_device_eval_batch_size=2,
     warmup_ratio=0.1,
     weight_decay=0.01,
     logging_dir="./logs",
@@ -60,6 +61,8 @@ training_args = TrainingArguments(
     greater_is_better=False,
     # fp16=True,
     bf16=True,
+    # torch_compile=True,
+    ddp_find_unused_parameters=False,
     remove_unused_columns=False,
     learning_rate=1e-4
 )
