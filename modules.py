@@ -4,6 +4,47 @@ import torch
 import torch.nn as nn
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
 
+class HapbertaAxialDecoder(nn.Module):
+    """
+    Axial decoder stack for Hapberta, similar to HapbertaAxialEncoder.
+    Currently mirrors the encoder, but can be extended for cross-attention.
+    """
+    def __init__(self, config):
+        super().__init__()
+        self.layer = nn.ModuleList([HapbertaAxialLayer(config) for _ in range(config.num_hidden_layers)])
+        self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,  # (batch_size, n_haps, n_snps, hidden_size)
+        attention_mask: Optional[torch.FloatTensor] = None,
+        distances: Optional[torch.FloatTensor] = None,
+        return_attentions: bool = False,
+    ) -> Union[tuple[torch.Tensor], BaseModelOutputWithPastAndCrossAttentions]:
+        if return_attentions:
+            row_attns = []
+            col_attns = []
+
+        for i, layer_module in enumerate(self.layer):
+            layer_outputs = layer_module(
+                hidden_states,
+                attention_mask,
+                distances,
+                return_attentions=return_attentions,
+            )
+            hidden_states = layer_outputs[0]
+            if return_attentions:
+                row_attns.append(layer_outputs[1])
+                col_attns.append(layer_outputs[2])
+
+        hidden_states = self.layer_norm(hidden_states)
+
+        return BaseModelOutputWithPastAndCrossAttentions(
+            last_hidden_state=hidden_states,
+            attentions=(row_attns, col_attns) if return_attentions else None
+        )
+
+
 class HapbertaAxialEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()

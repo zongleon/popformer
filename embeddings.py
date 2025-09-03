@@ -1,6 +1,7 @@
 import numpy as np
 from tqdm import tqdm
 import torch
+from transformers import RobertaConfig
 from models import HapbertaForMaskedLM, HapbertaForSequenceClassification
 from datasets import load_from_disk
 from collators import HaploSimpleDataCollator
@@ -9,7 +10,7 @@ import matplotlib.pyplot as plt
 import umap
 
 ds = load_from_disk("dataset2/tokenized")
-collator = HaploSimpleDataCollator(mlm_probability=0, subsample=32)
+collator = HaploSimpleDataCollator(mlm_probability=0.0, whole_snp_mask_probability=0.0, subsample=64)
 
 ds = ds.shuffle().select(range(512))
 
@@ -17,17 +18,20 @@ ds = ds.shuffle().select(range(512))
 colors = {'CEU': 'tab:blue', 'CHB': 'tab:orange', 'YRI': 'tab:green'}
 pop_colors = [colors[label] for label in ds["pop"]]
 
-# model = HapbertaForMaskedLM.from_pretrained(
-#     "./models/hapberta2d/",
-#     torch_dtype=torch.bfloat16
-# )
-model = HapbertaForSequenceClassification.from_pretrained(
-    "./models/hapberta2d_pop/checkpoint-500/",
+config = RobertaConfig.from_pretrained("models/hapberta2d_mae")
+config.encoder_only = True
+model = HapbertaForMaskedLM.from_pretrained(
+    "./models/hapberta2d_mae/",
+    config=config,
     torch_dtype=torch.bfloat16
 )
+# model = HapbertaForSequenceClassification.from_pretrained(
+#     "./models/hapberta2d_pop/checkpoint-500/",
+#     torch_dtype=torch.bfloat16
+# )
 model.to("cuda")
 model.eval()
-model.compile()
+# model.compile()
 
 def preds():
     batch_size = 4
@@ -46,14 +50,14 @@ def preds():
                         labels=None,
                         return_hidden_states=True)
             
-            embeds.append(output["hidden_states"].to(torch.float16).cpu().numpy())
+            embeds.append(output["hidden_states"].to(torch.float16).cpu().numpy().mean(axis=(1, 2)))
         
-
     embeds = np.concatenate(embeds, axis=0)
 
-    embeds_pooled = np.mean(embeds, axis=(1, 2))
-    embeds_pooled2 = embeds[:, 0, :, :].mean(axis=1)
-
+    # embeds_pooled = np.mean(embeds, axis=(1, 2))
+    # embeds_pooled2 = embeds[:, 0, :, :].mean(axis=1)
+    embeds_pooled = embeds
+    embeds_pooled2 = None
     return embeds_pooled, embeds_pooled2
 
 # pca on embeds

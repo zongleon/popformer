@@ -3,7 +3,9 @@ from transformers import Trainer, TrainingArguments
 from models import HapbertaForMaskedLM
 from datasets import load_from_disk
 from collators import HaploSimpleDataCollator
-# import numpy as np
+import numpy as np
+
+OUTPUT = "./models/hapberta2d_mae"
 
 # load dataset
 dataset = load_from_disk("dataset2/tokenized")
@@ -23,27 +25,33 @@ config = RobertaConfig(
     max_position_embeddings=512,
     position_embedding_type="haplo",
     axial=True,
+    mae=True,
+    mae_mask=0.0,
     bos_token_id=2,
     eos_token_id=3,
-    pad_token_id=5,
+    pad_token_id=4,
+    mask_token_id=5,
 )
 
 # Create model for masked LM
 model = HapbertaForMaskedLM(config)
 
 # data collator
-data_collator = HaploSimpleDataCollator(subsample=32)
+data_collator = HaploSimpleDataCollator(subsample=32,
+                                        mlm_probability=0.0,
+                                        whole_snp_mask_probability=0.6,
+                                        return_input_mask=True)
 
-# ex = data_collator([train_dataset[0]])
-# print(ex["input_ids"][0])
-# np.savetxt("test.txt", ex["input_ids"][0].cpu().numpy(), fmt="%d")
+
+ex = data_collator([train_dataset[0]])
+np.savetxt("test.txt", ex["input_ids"][0].cpu().numpy(), fmt="%d")
 
 # training arguments
 training_args = TrainingArguments(
-    output_dir="./models/hapberta2d",
+    output_dir=OUTPUT,
     overwrite_output_dir=True,
     num_train_epochs=10,
-    # max_steps=50,
+    # max_steps=500,
     # use_cpu=True,
     per_device_train_batch_size=2,
     per_device_eval_batch_size=2,
@@ -56,9 +64,9 @@ training_args = TrainingArguments(
     eval_strategy="steps",
     save_strategy="steps",
     save_total_limit=2,
-    load_best_model_at_end=True,
-    metric_for_best_model="eval_loss",
-    greater_is_better=False,
+    # load_best_model_at_end=True,
+    # metric_for_best_model="eval_loss",
+    # greater_is_better=False,
     # fp16=True,
     bf16=True,
     # torch_compile=True,
@@ -80,5 +88,5 @@ trainer = Trainer(
 trainer.train()
 
 # save the final model
-trainer.save_model("./models/hapberta2d")
+trainer.save_model(OUTPUT)
 

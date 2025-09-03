@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+from transformers import RobertaConfig
 from models import HapbertaForMaskedLM, HapbertaForSequenceClassification
 from datasets import load_from_disk
 from collators import HaploSimpleDataCollator
@@ -18,7 +19,7 @@ def test_masked_lm():
     print("Test: Masked performance")
     # Load data
     model = HapbertaForMaskedLM.from_pretrained(
-        "./models/hapberta2d/checkpoint-1000"
+        "./models/hapberta2d/"
     )
 
     ds = load_from_disk("dataset2/tokenized")
@@ -60,6 +61,62 @@ def test_masked_lm():
     print(predlbls[:20])
     print((lbls == predlbls).mean())
 
+def test_mae():
+    print("=" * 30)
+    print("Test: MAE performance")
+    # Load data
+    config = RobertaConfig.from_pretrained(
+        "./models/hapberta2d_mae/"
+    )
+    config.mae_mask = 0.0
+    model = HapbertaForMaskedLM.from_pretrained(
+        "./models/hapberta2d_mae/"
+    )
+
+    ds = load_from_disk("dataset2/tokenized")
+    collator = HaploSimpleDataCollator(subsample=64, mlm_probability=0.0, whole_snp_mask_probability=0.5)
+
+    # make a batch
+    inputs = collator([ds[0]])
+
+    # print(inputs)
+
+    # print masked haps and unmask token
+    haps = inputs["input_ids"].numpy()
+
+    print("Example input haps:")
+    print(haps)
+
+    print("Counts of masked tokens:")
+    print({i: (inputs["labels"][haps == 4] == i).sum() for i in range(7)})
+
+    ids_keep = torch.tensor([np.where((haps[0] == 4).all(axis=0))[0]])
+    ids_restore = torch.tensor([np.arange(haps.shape[2])])
+    print(ids_keep)
+    print(ids_restore)
+
+    # forward
+    outputs = model(inputs["input_ids"], inputs["distances"], inputs["attention_mask"], 
+                    input_mask=(ids_keep, ids_restore))
+
+    # print the predicted haps
+    # print(outputs["logits"].size())
+
+    # print the count of predicted labels (vocab size 7)
+    counts = outputs["logits"].argmax(dim=-1).cpu().numpy()
+    print("Example predicted tokens:")
+    print(counts)
+    print("Counts of predicted tokens:")
+    print({i: (counts[haps == 4] == i).sum() for i in range(7)})
+
+    # print the real vs predicted mask labels
+    lbls = inputs["labels"][haps == 4].numpy()
+    predlbls = counts[haps == 4]
+
+    print("Comparing first few tokens:")
+    print(lbls[:20])
+    print(predlbls[:20])
+    print((lbls == predlbls).mean())
 def test_realsim_ft():
     print("=" * 30)
     print("Test: Finetuning on real/sim task")
@@ -212,9 +269,10 @@ def test_baseline2():
 
 if __name__ == "__main__":
     # test_model()
-    test_baseline()
-    test_baseline2()
-    test_masked_lm()
+    # test_baseline()
+    # test_baseline2()
+    # test_masked_lm()
+    test_mae()
     # test_realsim_ft()
     # test_sel_ft()
 
