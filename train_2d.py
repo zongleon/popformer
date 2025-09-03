@@ -32,7 +32,10 @@ config = RobertaConfig(
 model = HapbertaForMaskedLM(config)
 
 # data collator
-data_collator = HaploSimpleDataCollator(subsample=32)
+data_collator = HaploSimpleDataCollator(subsample=32, 
+                                        mlm_probability=0.0,
+                                        whole_snp_mask_probability=0.0,
+                                        span_mask_probability=0.2)
 
 # ex = data_collator([train_dataset[0]])
 # print(ex["input_ids"][0])
@@ -40,7 +43,7 @@ data_collator = HaploSimpleDataCollator(subsample=32)
 
 # training arguments
 training_args = TrainingArguments(
-    output_dir="./models/hapberta2d",
+    output_dir="./models/hapberta2d2",
     overwrite_output_dir=True,
     num_train_epochs=10,
     # max_steps=50,
@@ -80,5 +83,5 @@ trainer = Trainer(
 trainer.train()
 
 # save the final model
-trainer.save_model("./models/hapberta2d")
+trainer.save_model("./models/hapberta2d2")
 

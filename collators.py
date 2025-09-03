@@ -12,9 +12,14 @@ class HaploSimpleDataCollator:
       - label_dtype : torch.dtype, dtype for the labels
     """
 
+    bos_token_id = 2
+    eos_token_id = 3
+    mask_token_id = 4
+    pad_token_id = 5
     subsample: int = 32
     mlm_probability: float = 0.15
     whole_snp_mask_probability: float = 0.75
+    span_mask_probability: float = 0.0
     label_dtype: torch.dtype = None
 
     def __init__(
@@ -22,11 +27,13 @@ class HaploSimpleDataCollator:
         subsample=32,
         mlm_probability=0.05,
         whole_snp_mask_probability=0.15,
+        span_mask_probability=0.0,
         label_dtype=None,
     ):
         self.subsample = subsample
         self.mlm_probability = mlm_probability
         self.whole_snp_mask_probability = whole_snp_mask_probability
+        self.span_mask_probability = span_mask_probability
         self.label_dtype = label_dtype
 
     def _torch_mask_tokens(self, inputs):
@@ -50,6 +57,20 @@ class HaploSimpleDataCollator:
             # Broadcast col_mask to all rows
             probability_matrix[:, :, col_mask] = 1.0  # force masking for these columns
 
+        if self.span_mask_probability > 0:
+            batch_size, n_rows, n_cols = inputs.shape
+            span_mask = torch.zeros_like(inputs, dtype=torch.bool)
+            mean_len = 8
+            for b in range(batch_size):
+                n_spans = int(self.span_mask_probability * n_cols / mean_len)
+                for _ in range(n_spans):
+                    start = torch.randint(0, n_cols, (1,))
+                    # geometric length
+                    length = torch.distributions.Geometric(1.0 / mean_len).sample().long()
+                    end = min(start + length, n_cols)
+                    span_mask[b, :, start:end] = True
+            probability_matrix[span_mask] = 1.0
+
         # Custom special tokens mask: True where token is NOT 0 or 1
         special_tokens_mask = ~((labels == 0) | (labels == 1))
         probability_matrix.masked_fill_(special_tokens_mask, value=0.0)
@@ -57,11 +78,10 @@ class HaploSimpleDataCollator:
         masked_indices = torch.bernoulli(probability_matrix).bool()
         labels[~masked_indices] = -100  # Only compute loss on masked tokens
 
-        mask_token_id = 4
         indices_replaced = (
             torch.bernoulli(torch.full(labels.shape, 1.0)).bool() & masked_indices
         )
-        inputs[indices_replaced] = mask_token_id
+        inputs[indices_replaced] = self.mask_token_id
 
         return inputs, labels
 
@@ -70,6 +90,17 @@ class HaploSimpleDataCollator:
         batch_distances = []
         batch_attention_masks = []
         batch_labels = []
+
+        # Find the index (position) of the maximum eos_token_id in the batch
+        # we'll pad to this, rather than a max size like 512
+        max_len = max(
+            [
+            torch.where(torch.tensor(ex["input_ids"]) == self.eos_token_id)[1].max().item()
+            for ex in examples
+            ]
+        ) + 1
+        if max_len % 8 != 0:
+            max_len = ((max_len // 8) + 1) * 8
 
         for idx, ex in enumerate(examples):
             # list of list of input_ids
@@ -81,9 +112,10 @@ class HaploSimpleDataCollator:
                 batch_labels.append(labels)
 
             input_ids = torch.tensor(input_ids, dtype=torch.long)
+            distances = torch.tensor(distances)
+
             # Identify non-padded haplotypes (rows not all pad_token_id)
-            pad_token_id = 5
-            non_pad_mask = ~(input_ids == pad_token_id).all(dim=1)
+            non_pad_mask = ~(input_ids == self.pad_token_id).all(dim=1)
             non_pad_indices = non_pad_mask.nonzero(as_tuple=True)[0]
 
             # Subsample only from non-padded haplotypes
@@ -95,18 +127,20 @@ class HaploSimpleDataCollator:
                 raise RuntimeError(
                     f"Not enough non-padded haplotypes ({len(non_pad_indices)}) to subsample {self.subsample}"
                 )
-
-            input_ids_2d = input_ids[selected]
+            input_ids = input_ids[selected, :max_len]
+            distances = distances[:max_len]
             
-            n_snps = input_ids_2d.shape[1]
-            attention_masks_2d = torch.ones((n_snps, n_snps), dtype=torch.long)
+            n_snps = input_ids.shape[1]
+            attention_masks = torch.ones((n_snps, n_snps), dtype=torch.long)
 
-            pad_cols = (input_ids_2d == pad_token_id).all(dim=0)
+            pad_cols = (input_ids == self.pad_token_id).all(dim=0)
             if pad_cols.any():
-                attention_masks_2d[:, pad_cols] = 0
+                attention_masks[:, pad_cols] = 0
 
-            batch_input_ids.append(input_ids_2d)
-            batch_attention_masks.append(attention_masks_2d)
+            # print("input ids shape ", input_ids.size())
+
+            batch_input_ids.append(input_ids)
+            batch_attention_masks.append(attention_masks)
 
             # add a haplotype thats just <s> <pad> * max_n_snps </s>
             # haplotype = [self.tokenizer.bos_token_id] + [self.tokenizer.pad_token_id] * (max_n_snps - 2) + [self.tokenizer.eos_token_id]
@@ -114,7 +148,7 @@ class HaploSimpleDataCollator:
             # attention_masks_2d.insert(0, [1] + [0] * (max_n_snps - 2) + [1])
 
             # Vectorized cumulative distance matrix
-            cumulative_dists = torch.cumsum(torch.tensor(ex["distances"]), dim=0)
+            cumulative_dists = torch.cumsum(distances, dim=0)
             dist_matrix = torch.abs(
                 cumulative_dists.unsqueeze(0) - cumulative_dists.unsqueeze(1)
             )
@@ -126,7 +160,7 @@ class HaploSimpleDataCollator:
         distances = torch.stack(batch_distances)
         if self.label_dtype is not None:
             labels = torch.tensor(batch_labels, dtype=self.label_dtype)
-        elif self.mlm_probability > 0:
+        elif self.mlm_probability > 0 or self.whole_snp_mask_probability > 0 or self.span_mask_probability > 0:
             input_ids, labels = self._torch_mask_tokens(input_ids)
         else:
             labels = None
