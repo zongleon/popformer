@@ -33,9 +33,9 @@ model = HapbertaForMaskedLM(config)
 
 # data collator
 data_collator = HaploSimpleDataCollator(subsample=32, 
-                                        mlm_probability=0.0,
-                                        whole_snp_mask_probability=0.0,
-                                        span_mask_probability=0.2)
+                                        mlm_probability=0.15,
+                                        whole_snp_mask_probability=0.,
+                                        span_mask_probability=0.15)
 
 # ex = data_collator([train_dataset[0]])
 # print(ex["input_ids"][0])
@@ -43,13 +43,13 @@ data_collator = HaploSimpleDataCollator(subsample=32,
 
 # training arguments
 training_args = TrainingArguments(
-    output_dir="./models/hapberta2d2",
+    output_dir="./models/hapberta2d4",
     overwrite_output_dir=True,
-    num_train_epochs=10,
+    num_train_epochs=5,
     # max_steps=50,
     # use_cpu=True,
-    per_device_train_batch_size=2,
-    per_device_eval_batch_size=2,
+    per_device_train_batch_size=8,
+    per_device_eval_batch_size=8,
     warmup_ratio=0.1,
     weight_decay=0.01,
     logging_dir="./logs",
@@ -83,5 +83,5 @@ trainer = Trainer(
 trainer.train()
 
 # save the final model
-trainer.save_model("./models/hapberta2d2")
+trainer.save_model("./models/hapberta2d3")
 

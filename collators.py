@@ -44,8 +44,9 @@ class HaploSimpleDataCollator:
         """
         labels = inputs.clone()
         probability_matrix = torch.full(labels.shape, self.mlm_probability)
-        # Oversample 1s: set higher probability for tokens == 1
-        probability_matrix[inputs == 1] = 0.5  # e.g., 50% chance for 1s
+        if self.mlm_probability > 0:
+            # Oversample 1s: set higher probability for tokens == 1
+            probability_matrix[inputs == 1] = 0.5  # e.g., 50% chance for 1s
 
         # --- Whole SNP (column) masking ---
         # For each column, decide whether to mask the whole column

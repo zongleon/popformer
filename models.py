@@ -37,7 +37,7 @@ class HapbertaForMaskedLM(RobertaForMaskedLM):
 
         masked_lm_loss = None
         if labels is not None:
-            loss_fct = torch.nn.CrossEntropyLoss()
+            loss_fct = torch.nn.CrossEntropyLoss(weight=torch.tensor([0.64152411, 2.26648352, 0, 0, 0, 0], device=input_ids.device))
             masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
 
         if return_hidden_states or return_attentions:
