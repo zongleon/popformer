@@ -9,7 +9,10 @@ import matplotlib.pyplot as plt
 import umap
 
 ds = load_from_disk("dataset2/tokenized")
-collator = HaploSimpleDataCollator(mlm_probability=0, subsample=32)
+collator = HaploSimpleDataCollator(mlm_probability=0., 
+                                   whole_snp_mask_probability=0., 
+                                   span_mask_probability=0., 
+                                   subsample=32)
 
 ds = ds.shuffle().select(range(512))
 
@@ -21,13 +24,13 @@ pop_colors = [colors[label] for label in ds["pop"]]
 #     "./models/hapberta2d/",
 #     torch_dtype=torch.bfloat16
 # )
-model = HapbertaForSequenceClassification.from_pretrained(
-    "./models/hapberta2d_pop/checkpoint-500/",
+model = HapbertaForMaskedLM.from_pretrained(
+    "./models/hapberta2d4/",
     torch_dtype=torch.bfloat16
 )
 model.to("cuda")
 model.eval()
-model.compile()
+# model.compile()
 
 def preds():
     batch_size = 4
@@ -46,15 +49,15 @@ def preds():
                         labels=None,
                         return_hidden_states=True)
             
-            embeds.append(output["hidden_states"].to(torch.float16).cpu().numpy())
+            embeds.append(output["hidden_states"].mean(axis=(1, 2)).to(torch.float16).cpu().numpy())
         
 
     embeds = np.concatenate(embeds, axis=0)
 
-    embeds_pooled = np.mean(embeds, axis=(1, 2))
-    embeds_pooled2 = embeds[:, 0, :, :].mean(axis=1)
-
-    return embeds_pooled, embeds_pooled2
+    # embeds_pooled = np.mean(embeds, axis=(1, 2))
+    # embeds_pooled2 = embeds[:, 0, :, :].mean(axis=1)
+    return embeds, None
+    # return embeds_pooled, embeds_pooled2
 
 # pca on embeds
 def pca(embeds):
@@ -81,7 +84,7 @@ def pca(embeds):
     plt.xlabel("PC1")
     plt.ylabel("PC2")
     plt.title("pca")
-    plt.savefig("figs/embeds_pca_ft.png", dpi=300)
+    plt.savefig("figs/embeds_pca.png", dpi=300)
 
 def um(embeds):
     # umap on embeds
@@ -97,7 +100,7 @@ def um(embeds):
     plt.xlabel("umap 1")
     plt.ylabel("umap 2")
     plt.title("umap")
-    plt.savefig("figs/embeds_umap_ft.png", dpi=300)
+    plt.savefig("figs/embeds_umap.png", dpi=300)
 
 def attns(model):
     inputs = collator([ds[0]])

@@ -271,7 +271,7 @@ class ColumnSelfAttention(nn.Module):
 class RelativePosAttnBias(nn.Module):
     """T5-style relative position bias for genomic sequences with distance information."""
     
-    def __init__(self, num_heads, num_buckets=64, max_distance=50000):
+    def __init__(self, num_heads, num_buckets=32, max_distance=50000):
         super().__init__()
         self.num_heads = num_heads
         self.num_buckets = num_buckets

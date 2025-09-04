@@ -5,7 +5,7 @@ from datasets import load_from_disk
 from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, mean_squared_error, r2_score, confusion_matrix
 from collators import HaploSimpleDataCollator
 
-MODE = "pop"
+MODE = "sel2"
 
 if MODE == "realsim":
     dataset_path = "dataset/tokenizedrealsim"
@@ -19,7 +19,7 @@ elif MODE == "sel":
     typ = torch.float32
 elif MODE == "sel2":
     dataset_path = "dataset2/tokenizedsel2"
-    output_path = "./models/hapberta2d_sel_binary"
+    output_path = "./models/hapberta2d_sel_binary_from_init"
     num_labels = 2
     typ = torch.long
 elif MODE == "pop":
@@ -71,7 +71,7 @@ model = HapbertaForSequenceClassification(RobertaConfig(
     classifier_dropout=0
 ))
 
-collator = HaploSimpleDataCollator(subsample=32, mlm_probability=0, label_dtype=typ)
+collator = HaploSimpleDataCollator(subsample=32, mlm_probability=0.0, label_dtype=typ)
 
 # training arguments
 training_args = TrainingArguments(
@@ -93,10 +93,10 @@ training_args = TrainingArguments(
     metric_for_best_model="eval_loss",
     greater_is_better=False,
     bf16=True,
-    torch_compile=True,
+    # torch_compile=True,
     ddp_find_unused_parameters=False,
     remove_unused_columns=False,
-    learning_rate=1e-5,
+    learning_rate=1e-4,
 )
 
 def compute_metrics(eval_pred):

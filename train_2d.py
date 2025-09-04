@@ -3,7 +3,7 @@ from transformers import Trainer, TrainingArguments
 from models import HapbertaForMaskedLM
 from datasets import load_from_disk
 from collators import HaploSimpleDataCollator
-# import numpy as np
+import numpy as np
 
 # load dataset
 dataset = load_from_disk("dataset2/tokenized")
@@ -37,9 +37,9 @@ data_collator = HaploSimpleDataCollator(subsample=32,
                                         whole_snp_mask_probability=0.,
                                         span_mask_probability=0.15)
 
-# ex = data_collator([train_dataset[0]])
-# print(ex["input_ids"][0])
-# np.savetxt("test.txt", ex["input_ids"][0].cpu().numpy(), fmt="%d")
+ex = data_collator([train_dataset[0]])
+print(ex["input_ids"][0])
+np.savetxt("test.txt", ex["input_ids"][0].cpu().numpy(), fmt="%d")
 
 # training arguments
 training_args = TrainingArguments(

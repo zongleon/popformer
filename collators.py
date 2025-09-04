@@ -17,17 +17,17 @@ class HaploSimpleDataCollator:
     mask_token_id = 4
     pad_token_id = 5
     subsample: int = 32
-    mlm_probability: float = 0.15
-    whole_snp_mask_probability: float = 0.75
-    span_mask_probability: float = 0.0
+    mlm_probability: float = 0.
+    whole_snp_mask_probability: float = 0.
+    span_mask_probability: float = 0.
     label_dtype: torch.dtype = None
 
     def __init__(
         self,
         subsample=32,
-        mlm_probability=0.05,
-        whole_snp_mask_probability=0.15,
-        span_mask_probability=0.0,
+        mlm_probability=0.,
+        whole_snp_mask_probability=0.,
+        span_mask_probability=0.,
         label_dtype=None,
     ):
         self.subsample = subsample

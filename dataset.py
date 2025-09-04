@@ -53,9 +53,9 @@ def read_outfile(file: str) -> Generator:
     return generator
 
 
-def get_iterator(pop: str, seed=None) -> RealDataRandomIterator:
+def get_iterator(pop: str, seed=None, custom_bed=None) -> RealDataRandomIterator:
     h5_file = GENOME_PATH.format(pop=pop)
-    bed_file = BED_PATH
+    bed_file = BED_PATH if custom_bed is None else custom_bed
     s = seed if seed is not None else DEFAULT_SEED
     iterator = RealDataRandomIterator(filename=h5_file, bed_file=bed_file, seed=s)
 
@@ -220,6 +220,7 @@ if __name__ == "__main__":
             "runsel",
             "ghist",
             "lai",
+            "realsel"
         ],
         help="Mode to run",
     )
@@ -351,3 +352,27 @@ if __name__ == "__main__":
         # Save tokenized data
         dataset = Dataset.from_generator(gen, features=features)
         dataset.save_to_disk("LAI/tokenized")
+    elif mode == "realsel":
+        t = args.extra
+        def gen():
+            it = get_iterator("CEU", 0, "SEL/bed.bed")
+            n_snps = it.num_snps
+            n_yielded = 0
+            for i in range(0, n_snps, 1):
+                if n_yielded > n_samples:
+                    break
+                region = it.real_region(neg1=False, region_len=True, start_idx=i, return_pos=True)
+                if region is not None:
+                    region, s, e, c = region
+                    sample = tokenizer(region)
+                    n_yielded += 1
+                    yield {
+                        "input_ids": sample[..., 0], 
+                        "distances": sample[0, :, 1], "start_pos": s, "end_pos": e,
+                        "chrom": c
+                    }
+
+        features = make_features(include_pos=True)
+        # Save tokenized data
+        dataset = Dataset.from_generator(gen, features=features)
+        dataset.save_to_disk("SEL/tokenized_CEU")

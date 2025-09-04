@@ -7,20 +7,19 @@ from datasets import load_from_disk
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
-def sweep():
-    data = load_from_disk("LAI/tokenized")
+def sweep(dataset, model, save_preds_path=None):
+    data = load_from_disk(dataset)
 
     model = HapbertaForSequenceClassification.from_pretrained(
-        "models/hapberta2d_pop/checkpoint-500",
+        model,
         torch_dtype=torch.bfloat16
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # device = "cpu"
     model.to(device)
     model.eval()
-    model.compile()
 
-    collator = HaploSimpleDataCollator(subsample=32, mlm_probability=0)
+    collator = HaploSimpleDataCollator(subsample=32)
 
     batch_size = 16
     preds = []
@@ -28,8 +27,8 @@ def sweep():
     with torch.no_grad():
         for i in tqdm(range(0, len(data), batch_size)):
             batch_samples = [data[j] for j in range(i, min(i + batch_size, len(data)))]
-            if len(batch_samples) != batch_size:
-                continue
+            # if len(batch_samples) != batch_size:
+            #     continue
             batch = collator(batch_samples)
             # Move tensors to device
             for k in batch:
@@ -43,11 +42,13 @@ def sweep():
 
     # print(preds[-1])
     preds = np.concatenate(preds, axis=0)
-    np.savez("LAI/LAI_preds.npz", preds=preds, start_pos=data["start_pos"], end_pos=data["end_pos"],
+    np.savez(save_preds_path, preds=preds, start_pos=data["start_pos"], end_pos=data["end_pos"],
              chrom=data["chrom"])
 
-def plot():
-    data = np.load("LAI/LAI_preds.npz")
+def plot(save_preds_path, out_fig_path, mode="pop"):
+    assert mode in ["pop", "sel"], "Only can plot pop classification or selection preds"
+
+    data = np.load(save_preds_path)
     # preds = torch.softmax(torch.tensor(data["preds"]), dim=-1)[:, 1].numpy()
     preds = data["preds"]
     start_pos = data["start_pos"]
@@ -72,15 +73,23 @@ def plot():
     # Create figure with nice size
     plt.figure(figsize=(12, 6))
     
-    # Stacked area chart for population probabilities
-    for i in range(3):
-        plt.plot(pos, ps[:, i], label=["CEU", "CHB", "YRI"][i], alpha=0.8)
+    if mode == "pop":
+        # Stacked area chart for population probabilities
+        for i in range(3):
+            plt.plot(pos, ps[:, i], label=["CEU", "CHB", "YRI"][i], alpha=0.8)
+        lbl = "Probability of population"
+        tit = "Predicting population label"
+        plt.legend(title="Population", loc="upper right")
     
+    elif mode == "sel":
+        plt.plot(pos, ps[:, 1])
+        lbl = "Probability of selection"
+        tit = "Predicting selection along real genome"
+
     # Styling
-    plt.xlabel('Chromosome 1 Position (bp)')
-    plt.ylabel('Probability of population')
-    plt.title('Predicting ancestry')
-    plt.legend(title="Population", loc="upper right")
+    plt.xlabel(f'Chromosome {data["chrom"][0]} Position (bp)')
+    plt.ylabel(lbl)
+    plt.title(tit)
     
     # Add grid for better readability
     plt.grid(True, alpha=0.3, linestyle='--')
@@ -92,49 +101,9 @@ def plot():
     plt.tight_layout()
     
     # Save the plot
-    plt.savefig("LAI/fig3.png", dpi=300, bbox_inches='tight')
-
-
-def select(t: str, threshold: float = 0.2):
-    data = np.load(f"GHIST/ghist_preds2_{t}.npz")
-    preds = torch.softmax(torch.tensor(data["preds"]), dim=-1)[:, 1].numpy()
-    start_pos = data["start_pos"]
-    end_pos = data["end_pos"]
-
-    # Compute average prediction per position as in plot()
-    p = np.zeros((end_pos[-1] - start_pos[0]))
-    counts = np.zeros_like(p)
-    for i in range(len(preds)):
-        s = start_pos[i] - start_pos[0]
-        e = end_pos[i] - start_pos[0]
-        p[s:e] += preds[i]
-        counts[s:e] += 1
-    counts[counts == 0] = 1
-    avg_pred = p / counts
-    pos = np.arange(start_pos[0], end_pos[-1])
-
-    # Find contiguous ranges where avg_pred > threshold
-    above = avg_pred > threshold
-    ranges = []
-    in_range = False
-    for i, flag in enumerate(above):
-        if flag and not in_range:
-            range_start = pos[i]
-            in_range = True
-        elif not flag and in_range:
-            range_end = pos[i-1] + 1  # end is exclusive
-            ranges.append((range_start, range_end))
-            in_range = False
-    if in_range:
-        ranges.append((range_start, pos[-1]+1))
-
-    # Output the ranges
-    print(f"(avg_pred > {threshold})")
-    for r in ranges:
-        print(f"21\t{r[0]}\t{r[1]}".expandtabs(4))
+    plt.savefig(out_fig_path, dpi=300, bbox_inches='tight')
 
 
 if __name__ == "__main__":
-    # sweep()
-    plot()
-    # select(t, 0.2)
+    sweep("SEL/tokenized_CEU", "models/hapberta2d_sel_binary/checkpoint-1000", "SEL/CEU_preds.npz")
+    plot("SEL/CEU_preds.npz", "SEL/fig.png", "sel")
