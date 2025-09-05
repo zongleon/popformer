@@ -1,3 +1,4 @@
+import math
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 import numpy as np
@@ -248,12 +249,45 @@ def test_baseline2():
     print("Counts of baseline predicted tokens:")
     print({i: (pred_lbls == i).sum() for i in range(7)})
 
+def test_distance():
+    # Embedding table for relative position biases
+    lin_buckets = torch.linspace(
+        0,
+        50000,# math.log10(50000), 
+        32 - 1
+    ).cpu().numpy()
+    log_buckets = torch.logspace(
+        0,
+        math.log10(50000), 
+        32 - 1
+    ).cpu().numpy()
+    print(log_buckets)
+    print(lin_buckets)
+
+    ds = load_from_disk("dataset2/tokenized")
+    collator = HaploSimpleDataCollator()
+    inputs = collator([ds[i] for i in range(5)])
+    distances = inputs["distances"].numpy()
+    # Assign distances to buckets
+    np.savetxt("test_distances.out", distances[0], fmt="%05d")
+    
+    bucket_indices = np.digitize(distances, lin_buckets).flatten()
+    plt.figure(figsize=(8, 4))
+    plt.hist(bucket_indices, bins=np.arange(len(lin_buckets)+2)-0.5, edgecolor='black')
+    plt.xlabel("Bucket index")
+    plt.ylabel("Count")
+    plt.title("Histogram of pairwise distances in log buckets")
+    plt.tight_layout()
+    plt.savefig("figs/distance_histogram_lin.png", dpi=300)
+
 
 if __name__ == "__main__":
     # test_model()
-    test_baseline()
-    test_baseline2()
-    test_masked_lm("models/hapberta2d4", 0.15, 0., 0.15)
+    # test_baseline()
+    # test_baseline2()
+    # test_masked_lm("models/hapberta2d4", 0.15, 0., 0.15)
     # test_realsim_ft()
     # test_sel_ft()
+
+    test_distance()
 

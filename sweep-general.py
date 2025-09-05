@@ -59,11 +59,17 @@ def plot(save_preds_path, out_fig_path, mode="pop"):
     for i in range(len(preds)):
         s = start_pos[i] - start_pos[0]
         e = end_pos[i] - start_pos[0]
-        p[s:e] += preds[i]
-        counts[s:e] += 1
+        # max
+        for pos in range(s, e):
+            if p[pos] < preds[i]:
+                p[pos] = preds[i]
+
+        # sum
+        # p[s:e] += preds[i]
+        # counts[s:e] += 1
     # Avoid division by zero
-    counts[counts == 0] = 1
-    p /= counts
+    # counts[counts == 0] = 1
+    # p /= counts
     ps = torch.softmax(torch.tensor(p), dim=-1).numpy()
     pos = np.arange(start_pos[0], end_pos[-1])
 
@@ -105,5 +111,5 @@ def plot(save_preds_path, out_fig_path, mode="pop"):
 
 
 if __name__ == "__main__":
-    sweep("SEL/tokenized_CEU", "models/hapberta2d_sel_binary/checkpoint-1000", "SEL/CEU_preds.npz")
+    sweep("SEL/tokenized_CEU", "models/hapberta2d_sel_binary/", "SEL/CEU_preds.npz")
     plot("SEL/CEU_preds.npz", "SEL/fig.png", "sel")

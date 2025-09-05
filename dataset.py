@@ -358,7 +358,7 @@ if __name__ == "__main__":
             it = get_iterator("CEU", 0, "SEL/bed.bed")
             n_snps = it.num_snps
             n_yielded = 0
-            for i in range(0, n_snps, 1):
+            for i in range(0, n_snps, 64):
                 if n_yielded > n_samples:
                     break
                 region = it.real_region(neg1=False, region_len=True, start_idx=i, return_pos=True)

@@ -11,18 +11,18 @@ def sweep(t: str):
     data = load_from_disk(f"GHIST/ghist_samples_{t}")
 
     model = HapbertaForSequenceClassification.from_pretrained(
-        "models/hapberta2d_sel/checkpoint-500",
+        "models/hapberta2d_sel_binary",
         torch_dtype=torch.bfloat16
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # device = "cpu"
     model.to(device)
     model.eval()
-    compiled_model = torch.compile(model, fullgraph=True)
+    # compiled_model = torch.compile(model, fullgraph=True)
 
-    collator = HaploSimpleDataCollator(subsample=32, mlm_probability=0)
+    collator = HaploSimpleDataCollator(subsample=32)
 
-    batch_size = 16
+    batch_size = 8
     preds = []
 
     with torch.no_grad():
@@ -34,19 +34,20 @@ def sweep(t: str):
                 if isinstance(batch[k], torch.Tensor):
                     batch[k] = batch[k].to(device)
             
-            output = compiled_model(batch["input_ids"], batch["distances"], batch["attention_mask"])
+            output = model(batch["input_ids"], batch["distances"], batch["attention_mask"])
             
             pred = output["logits"].to(torch.float16).cpu().numpy().squeeze()
             preds.append(pred)
 
     # print(preds[-1])
     preds = np.concatenate(preds, axis=0)
-    np.savez(f"GHIST/ghist_preds_{t}.npz", preds=preds, start_pos=data["start_pos"], end_pos=data["end_pos"])
+    np.savez(f"GHIST/ghist_preds3_{t}.npz", preds=preds, start_pos=data["start_pos"], end_pos=data["end_pos"])
 
 def plot(t: str):
-    data = np.load(f"GHIST/ghist_preds_{t}.npz")
-    # preds = torch.softmax(torch.tensor(data["preds"]), dim=-1)[:, 1].numpy()
-    preds = data["preds"]
+    data = np.load(f"GHIST/ghist_preds3_{t}.npz")
+    preds = torch.softmax(torch.tensor(data["preds"]), dim=-1)[:, 1].numpy()
+    # preds = data["preds"]
+    # print(preds.shape)
     start_pos = data["start_pos"]
     end_pos = data["end_pos"]
     
@@ -83,7 +84,7 @@ def plot(t: str):
     plt.tight_layout()
     
     # Save the plot
-    plt.savefig(f'GHIST/selection_coefficients_plot_{t}.png', dpi=300, bbox_inches='tight')
+    plt.savefig(f'GHIST/selection_coefficients_plot3_{t}.png', dpi=300, bbox_inches='tight')
 
 
 def select(t: str, threshold: float = 0.2):

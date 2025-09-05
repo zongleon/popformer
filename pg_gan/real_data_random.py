@@ -37,6 +37,9 @@ class Region:
     def inside_mask(self, mask_dict, frac_callable = 0.5):
         if mask_dict is None:
             return True
+        
+        if self.chrom not in mask_dict:
+            return False
 
         mask_lst = mask_dict[self.chrom] # restrict to this chrom
         region_start_idx, start_inside = binary_search(self.start_pos, mask_lst)
