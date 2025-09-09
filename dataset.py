@@ -306,6 +306,7 @@ if __name__ == "__main__":
         dataset = Dataset.from_generator(gen, features=features)
         dataset.save_to_disk(f"dataset{VERSION}/tokenizedsel2")
     elif mode == "ghist":
+        global_vars.L = 100000
         t = args.extra
         def gen():
             it = get_iterator_ghist(
@@ -327,7 +328,7 @@ if __name__ == "__main__":
         features = make_features(include_pos=True)
         # Save tokenized data
         dataset = Dataset.from_generator(gen, features=features)
-        dataset.save_to_disk(f"GHIST/ghist_samples_{t}")
+        dataset.save_to_disk(f"GHIST/ghist_samples_{t}2")
     
     elif mode == "lai":
         t = args.extra
@@ -358,8 +359,10 @@ if __name__ == "__main__":
             it = get_iterator("CEU", 0, "SEL/bed.bed")
             n_snps = it.num_snps
             n_yielded = 0
-            for i in range(0, n_snps, 64):
+            for i in range(0, n_snps, 16):
                 if n_yielded > n_samples:
+                    break
+                if int(it.pos_all[i]) > 1600000:
                     break
                 region = it.real_region(neg1=False, region_len=True, start_idx=i, return_pos=True)
                 if region is not None:

@@ -20,6 +20,7 @@ class HaploSimpleDataCollator:
     mlm_probability: float = 0.
     whole_snp_mask_probability: float = 0.
     span_mask_probability: float = 0.
+    pad_batch = False
     label_dtype: torch.dtype = None
 
     def __init__(
@@ -28,12 +29,14 @@ class HaploSimpleDataCollator:
         mlm_probability=0.,
         whole_snp_mask_probability=0.,
         span_mask_probability=0.,
+        pad_batch=True,
         label_dtype=None,
     ):
         self.subsample = subsample
         self.mlm_probability = mlm_probability
         self.whole_snp_mask_probability = whole_snp_mask_probability
         self.span_mask_probability = span_mask_probability
+        self.pad_batch = pad_batch
         self.label_dtype = label_dtype
 
     def _torch_mask_tokens(self, inputs):
@@ -94,14 +97,17 @@ class HaploSimpleDataCollator:
 
         # Find the index (position) of the maximum eos_token_id in the batch
         # we'll pad to this, rather than a max size like 512
-        max_len = max(
-            [
-            torch.where(torch.tensor(ex["input_ids"]) == self.eos_token_id)[1].max().item()
-            for ex in examples
-            ]
-        ) + 1
-        if max_len % 8 != 0:
-            max_len = ((max_len // 8) + 1) * 8
+        if not self.pad_batch:
+            max_len = max(
+                [
+                torch.where(torch.tensor(ex["input_ids"]) == self.eos_token_id)[1].max().item()
+                for ex in examples
+                ]
+            ) + 1
+            if max_len % 8 != 0:
+                max_len = ((max_len // 8) + 1) * 8
+        else:
+            max_len = 512
 
         for idx, ex in enumerate(examples):
             # list of list of input_ids

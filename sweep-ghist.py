@@ -7,22 +7,23 @@ from datasets import load_from_disk
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
-def sweep(t: str):
+def sweep(t: str, model: str, name: str):
     data = load_from_disk(f"GHIST/ghist_samples_{t}")
 
     model = HapbertaForSequenceClassification.from_pretrained(
-        "models/hapberta2d_sel_binary",
-        torch_dtype=torch.bfloat16
+        model,
+        torch_dtype=torch.bfloat16,
+        num_labels=2 if "bin" in name else 1
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # device = "cpu"
     model.to(device)
     model.eval()
-    # compiled_model = torch.compile(model, fullgraph=True)
+    # model.compile()
 
-    collator = HaploSimpleDataCollator(subsample=32)
+    collator = HaploSimpleDataCollator(subsample=32, pad_batch=False)
 
-    batch_size = 8
+    batch_size = 32
     preds = []
 
     with torch.no_grad():
@@ -32,7 +33,7 @@ def sweep(t: str):
             # Move tensors to device
             for k in batch:
                 if isinstance(batch[k], torch.Tensor):
-                    batch[k] = batch[k].to(device)
+                    batch[k] = batch[k].to(device=device)
             
             output = model(batch["input_ids"], batch["distances"], batch["attention_mask"])
             
@@ -40,13 +41,18 @@ def sweep(t: str):
             preds.append(pred)
 
     # print(preds[-1])
-    preds = np.concatenate(preds, axis=0)
-    np.savez(f"GHIST/ghist_preds3_{t}.npz", preds=preds, start_pos=data["start_pos"], end_pos=data["end_pos"])
+    preds = np.concatenate(preds[:-1], axis=0)
+    np.savez(f"GHIST/ghist_{name}_{t}.npz", preds=preds, start_pos=data["start_pos"], end_pos=data["end_pos"])
 
-def plot(t: str):
-    data = np.load(f"GHIST/ghist_preds3_{t}.npz")
-    preds = torch.softmax(torch.tensor(data["preds"]), dim=-1)[:, 1].numpy()
-    # preds = data["preds"]
+def plot(t: str, name: str):
+    data = np.load(f"GHIST/ghist_{name}_{t}.npz")
+    if "reg" in name:
+        preds = data["preds"]
+        ylbl = "pred. selection coeff."
+    else:
+        preds = torch.softmax(torch.tensor(data["preds"]), dim=-1)[:, 1].numpy()
+        # preds = data["preds"][:, 1]
+        ylbl = "pred. probability of selection"
     # print(preds.shape)
     start_pos = data["start_pos"]
     end_pos = data["end_pos"]
@@ -70,9 +76,8 @@ def plot(t: str):
     plt.plot(pos, p, linewidth=0.8, alpha=0.8)
     
     # Styling
-    plt.xlabel('Chromosome Position (bp)')
-    plt.ylabel('Predicted Selection Coefficient')
-    plt.title('Predicted Selection Coefficients Across Chromosome')
+    plt.xlabel('Position (bp)')
+    plt.ylabel(ylbl)
     
     # Add grid for better readability
     plt.grid(True, alpha=0.3, linestyle='--')
@@ -84,7 +89,44 @@ def plot(t: str):
     plt.tight_layout()
     
     # Save the plot
-    plt.savefig(f'GHIST/selection_coefficients_plot3_{t}.png', dpi=300, bbox_inches='tight')
+    plt.savefig(f'GHIST/sel_{name}_{t}.png', dpi=300, bbox_inches='tight')
+
+
+def plot2(t: str, name: str):
+    data = np.load(f"GHIST/ghist_{name}_{t}.npz")
+    if "reg" in name:
+        preds = data["preds"]
+        ylbl = "pred. selection coeff."
+    else:
+        preds = torch.softmax(torch.tensor(data["preds"]), dim=-1)[:, 1].numpy()
+        # preds = data["preds"][:, 1]
+        ylbl = "pred. probability of selection"
+    # print(preds.shape)
+    start_pos = data["start_pos"][:preds.shape[0]]
+    end_pos = data["end_pos"]
+    
+    print(start_pos.shape, preds.shape)
+    # Create figure with nice size
+    plt.figure(figsize=(12, 6))
+    
+    # Plot predictions vs positions
+    plt.scatter(start_pos, preds, linewidth=0.8, alpha=0.8)
+    
+    # Styling
+    plt.xlabel('Position (bp)')
+    plt.ylabel(ylbl)
+    
+    # Add grid for better readability
+    plt.grid(True, alpha=0.3, linestyle='--')
+    
+    # Format x-axis to show positions in a readable format
+    plt.ticklabel_format(style='plain', axis='x', scilimits=(0,0))
+    
+    # Adjust layout to prevent label cutoff
+    plt.tight_layout()
+    
+    # Save the plot
+    plt.savefig(f'GHIST/sel_{name}_{t}_2.png', dpi=300, bbox_inches='tight')
 
 
 def select(t: str, threshold: float = 0.2):
@@ -128,6 +170,8 @@ def select(t: str, threshold: float = 0.2):
 
 if __name__ == "__main__":
     t = sys.argv[1]
-    sweep(t)
-    plot(t)
+    model = sys.argv[2]
+    name = sys.argv[3]
+    # sweep(t, model, name)
+    plot2(t, name)
     # select(t, 0.2)

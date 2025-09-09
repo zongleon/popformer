@@ -45,7 +45,7 @@ def sweep(dataset, model, save_preds_path=None):
     np.savez(save_preds_path, preds=preds, start_pos=data["start_pos"], end_pos=data["end_pos"],
              chrom=data["chrom"])
 
-def plot(save_preds_path, out_fig_path, mode="pop"):
+def plot(save_preds_path, out_fig_path, mode="pop", agg="mean"):
     assert mode in ["pop", "sel"], "Only can plot pop classification or selection preds"
 
     data = np.load(save_preds_path)
@@ -54,27 +54,37 @@ def plot(save_preds_path, out_fig_path, mode="pop"):
     start_pos = data["start_pos"]
     end_pos = data["end_pos"]
     
-    p = np.zeros((end_pos[-1] - start_pos[0], preds.shape[1]))
+    if mode == "sel":
+        d = 1
+    else:
+        d = preds.shape[1]
+    p = np.zeros((end_pos[-1] - start_pos[0], d))
     counts = np.zeros_like(p)
     for i in range(len(preds)):
         s = start_pos[i] - start_pos[0]
         e = end_pos[i] - start_pos[0]
-        # max
-        for pos in range(s, e):
-            if p[pos] < preds[i]:
-                p[pos] = preds[i]
-
-        # sum
-        # p[s:e] += preds[i]
-        # counts[s:e] += 1
+        if agg == "max":
+            for pos in range(s, e):
+                if p[pos] < preds[i]:
+                    p[pos] = preds[i]
+        elif agg == "mean":
+            # sum
+            p[s:e] += preds[i]
+            counts[s:e] += 1
     # Avoid division by zero
-    # counts[counts == 0] = 1
-    # p /= counts
-    ps = torch.softmax(torch.tensor(p), dim=-1).numpy()
-    pos = np.arange(start_pos[0], end_pos[-1])
+    if agg == "mean":
+        counts[counts == 0] = 1
+        p /= counts
 
-    # Only plot positions where all output logits were not zero
-    ps = np.ma.masked_where((p == 0), ps)
+
+    pos = np.arange(start_pos[0], end_pos[-1])
+    if "reg" not in save_preds_path: 
+        ps = torch.softmax(torch.tensor(p), dim=-1).numpy()
+
+        # Only plot positions where all output logits were not zero
+        ps = np.ma.masked_where((p == 0), ps)
+    else:
+        ps = p
 
     # Create figure with nice size
     plt.figure(figsize=(12, 6))
@@ -88,7 +98,10 @@ def plot(save_preds_path, out_fig_path, mode="pop"):
         plt.legend(title="Population", loc="upper right")
     
     elif mode == "sel":
-        plt.plot(pos, ps[:, 1])
+        if "reg" in save_preds_path:
+            plt.plot(pos, ps)
+        else:
+            plt.plot(pos, ps[:, 1])
         lbl = "Probability of selection"
         tit = "Predicting selection along real genome"
 
@@ -111,5 +124,5 @@ def plot(save_preds_path, out_fig_path, mode="pop"):
 
 
 if __name__ == "__main__":
-    sweep("SEL/tokenized_CEU", "models/hapberta2d_sel_binary/", "SEL/CEU_preds.npz")
-    plot("SEL/CEU_preds.npz", "SEL/fig.png", "sel")
+    sweep("SEL/tokenized_CEU", "models/hapberta2d_sel/", "SEL/CEU_reg_preds.npz")
+    plot("SEL/CEU_reg_preds.npz", "SEL/fig.png", "sel")
