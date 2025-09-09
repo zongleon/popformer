@@ -97,7 +97,7 @@ class HaploSimpleDataCollator:
 
         # Find the index (position) of the maximum eos_token_id in the batch
         # we'll pad to this, rather than a max size like 512
-        if not self.pad_batch:
+        if self.pad_batch:
             max_len = max(
                 [
                 torch.where(torch.tensor(ex["input_ids"]) == self.eos_token_id)[1].max().item()

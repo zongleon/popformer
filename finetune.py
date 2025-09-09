@@ -4,27 +4,33 @@ from transformers import RobertaConfig, TrainingArguments, Trainer
 from datasets import load_from_disk
 from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, mean_squared_error, r2_score, confusion_matrix
 from collators import HaploSimpleDataCollator
+import argparse
 
-MODE = "sel2"
+parser = argparse.ArgumentParser(description="finetune")
+parser.add_argument("--mode", type=str, default="sel2", help="Mode: realsim/sel/sel2/pop")
+parser.add_argument("--dataset_path", type=str, default="", help="Path to tokenized dataset")
+parser.add_argument("--num_epochs", type=int, default=5, help="Number of training epochs")
+parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training and evaluation")
+parser.add_argument("--output_path", type=str, default="", help="Output path for model checkpoints")
+parser.add_argument("--learning_rate", type=float, default=1e-4, help="Learning rate")
+parser.add_argument("--from_init", action="store_true", help="Whether to train from scratch")
+
+args = parser.parse_args()
+
+MODE = args.mode
+dataset_path = args.dataset_path
+output_path = args.output_path
 
 if MODE == "realsim":
-    dataset_path = "dataset/tokenizedrealsim"
-    output_path = "./models/hapberta2d_realsim"
     num_labels = 2
     typ = torch.long
 elif MODE == "sel":
-    dataset_path = "dataset2/tokenizedsel"
-    output_path = "./models/hapberta2d_sel"
     num_labels = 1 # continuous
     typ = torch.float32
 elif MODE == "sel2":
-    dataset_path = "dataset2/tokenizedsel2"
-    output_path = "./models/hapberta2d_sel_binary_from_init"
     num_labels = 2
     typ = torch.long
 elif MODE == "pop":
-    dataset_path = "dataset2/tokenized"
-    output_path = "./models/hapberta2d_pop_from_init"
     num_labels = 3
     typ = torch.long
 else:
@@ -51,35 +57,37 @@ dataset = dataset.train_test_split(test_size=0.1)
 train_dataset = dataset["train"]
 eval_dataset = dataset["test"]
 
-# model = HapbertaForSequenceClassification.from_pretrained("./models/hapberta2d",
-#                                                             classifier_dropout=0,
-#                                                             num_labels=num_labels,
-# )
-model = HapbertaForSequenceClassification(RobertaConfig(
-    vocab_size=6,
-    hidden_size=768,
-    num_hidden_layers=12,
-    num_attention_heads=12,
-    intermediate_size=3072,
-    max_position_embeddings=512,
-    position_embedding_type="haplo",
-    axial=True,
-    bos_token_id=2,
-    eos_token_id=3,
-    pad_token_id=5,
-    num_labels=num_labels,
-    classifier_dropout=0
-))
+if args.from_init:
+    model = HapbertaForSequenceClassification(RobertaConfig(
+        vocab_size=6,
+        hidden_size=768,
+        num_hidden_layers=12,
+        num_attention_heads=12,
+        intermediate_size=3072,
+        max_position_embeddings=512,
+        position_embedding_type="haplo",
+        axial=True,
+        bos_token_id=2,
+        eos_token_id=3,
+        pad_token_id=5,
+        num_labels=num_labels,
+        classifier_dropout=0
+    ))
+else:
+    model = HapbertaForSequenceClassification.from_pretrained("./models/pt",
+                                                                classifier_dropout=0,
+                                                                num_labels=num_labels,
+    )
 
-collator = HaploSimpleDataCollator(subsample=32, mlm_probability=0.0, label_dtype=typ)
+collator = HaploSimpleDataCollator(subsample=32, label_dtype=typ)
 
 # training arguments
 training_args = TrainingArguments(
     output_dir=output_path,
     overwrite_output_dir=True,
-    num_train_epochs=10,
-    per_device_train_batch_size=2,
-    per_device_eval_batch_size=2,
+    num_train_epochs=args.num_epochs,
+    per_device_train_batch_size=args.batch_size,
+    per_device_eval_batch_size=args.batch_size,
     warmup_ratio=0.1,
     weight_decay=0.01,
     logging_dir="./logs",
@@ -93,10 +101,9 @@ training_args = TrainingArguments(
     metric_for_best_model="eval_loss",
     greater_is_better=False,
     bf16=True,
-    # torch_compile=True,
     ddp_find_unused_parameters=False,
     remove_unused_columns=False,
-    learning_rate=1e-4,
+    learning_rate=args.learning_rate,
 )
 
 def compute_metrics(eval_pred):

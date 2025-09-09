@@ -44,9 +44,30 @@ def sweep(t: str, model: str, name: str):
     preds = np.concatenate(preds[:-1], axis=0)
     np.savez(f"GHIST/ghist_{name}_{t}.npz", preds=preds, start_pos=data["start_pos"], end_pos=data["end_pos"])
 
+
+def sweep_snpdensity(t: str):
+    data = load_from_disk(f"GHIST/ghist_samples_{t}")
+
+    collator = HaploSimpleDataCollator(subsample_haps=32, pad_batch=True)
+
+    preds = []
+
+    with torch.no_grad():
+        for i in tqdm(range(len(data))):
+            batch_samples = [data[i]]
+            batch = collator(batch_samples)
+            preds.append(batch["input_ids"].shape[2])
+
+    preds = np.array(preds)
+    np.savez(f"GHIST/ghist_snpdens_{t}.npz", preds=preds, start_pos=data["start_pos"], end_pos=data["end_pos"])
+
+
 def plot(t: str, name: str):
     data = np.load(f"GHIST/ghist_{name}_{t}.npz")
-    if "reg" in name:
+    if "snpdens" in name:
+        preds = data["preds"]
+        ylbl = "num SNPs in window"
+    elif "reg" in name:
         preds = data["preds"]
         ylbl = "pred. selection coeff."
     else:
@@ -173,5 +194,7 @@ if __name__ == "__main__":
     model = sys.argv[2]
     name = sys.argv[3]
     # sweep(t, model, name)
-    plot2(t, name)
+    # sweep_snpdensity(t)
+    plot(t, name)
+    # plot2(t, name)
     # select(t, 0.2)

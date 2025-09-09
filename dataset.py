@@ -8,6 +8,7 @@ import os
 import numpy as np
 from datasets import Dataset, Features, Array2D, Value, List
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 from pg_gan import global_vars
 from pg_gan.generator import Generator
@@ -16,7 +17,7 @@ from pg_gan.real_data_random import RealDataRandomIterator
 from pg_gan.ss_helpers import parse_output
 from pg_gan.util import parse_args, process_opts
 
-VERSION = 2
+VERSION = 4
 
 OUTFILE_PATH = "outfiles/{pop}/{pop}_{seed}_{model}.out"
 GENOME_PATH = "/bigdata/smathieson/1000g-share/HDF5/{pop}.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.h5"
@@ -74,7 +75,7 @@ def get_iterator_ghist(name: str, bed_name: str) -> RealDataRandomIterator:
     return iterator
 
 
-def get_data(pop: str, n_samples: int, seed=None) -> np.ndarray:
+def get_data(pop: str, n_samples: int, seed=None, snp=False) -> np.ndarray:
     """
     Get a dataset of real and simulated data.
 
@@ -87,10 +88,24 @@ def get_data(pop: str, n_samples: int, seed=None) -> np.ndarray:
     samples = np.zeros(
         (n_samples, MAX_HAPS, NUM_SNPS + 2, 2), dtype=np.float32
     )
-
+    # Collect the lengths for histogram
+    lengths = []
     for i in tqdm(range(n_samples)):
-        sample = iterator.real_region(neg1=False, region_len=True)        
+        if snp:
+            global_vars.NUM_SNPS = np.random.randint(32, NUM_SNPS)
+        sample = iterator.real_region(neg1=False, region_len=(not snp))
+        lengths.append(sample.shape[1])
         samples[i] = tokenizer(sample)
+
+    # Print histogram of sample.shape[1]
+    bins = np.linspace(0, 1024, 32)
+    plt.hist(lengths, bins=bins, label=pop, alpha=0.5)
+    plt.xlabel("Number of SNPs (sample.shape[1])")
+    plt.ylabel("Frequency")
+    plt.legend()
+    plt.title(f"Histogram of SNP counts, window size {global_vars.L}")
+    if pop == "GBR" and not snp:
+        plt.savefig(f"figs/snp_hist_{global_vars.L}.png", dpi=300)
 
     return samples
 
@@ -234,12 +249,20 @@ if __name__ == "__main__":
     n_samples = args.n_samples
 
     if mode == "gen":
-        for pop in ["CEU", "CHB", "YRI"]:
-            samples = get_data(pop=pop, n_samples=n_samples, seed=0)
-            save_data(pop, samples)
+        if args.extra == "genomewindow":
+            for pop in ["CEU", "CHB", "YRI", "CHS", "ESN", "GBR"]:
+                global_vars.L = 50000
+                samples = get_data(pop=pop, n_samples=n_samples, seed=0)
+                save_data(pop, samples)
+        elif args.extra == "snpwindow":
+            for pop in ["CEU", "CHB", "YRI", "CHS", "ESN", "GBR"]:
+                global_vars.NUM_SNPS = 512
+                samples = get_data(pop=pop, n_samples=n_samples, seed=0, snp=True)
+                save_data(pop, samples)
+
     elif mode == "runsimple":
         def gen():
-            for pop in ["CEU", "CHB", "YRI"]:
+            for pop in ["CEU", "CHB", "YRI", "CHS", "ESN", "GBR"]:
                 samples = load_data(pop)
                 for sample in samples:
                     yield {
@@ -288,6 +311,14 @@ if __name__ == "__main__":
                     for sample, dist in zip(samples, distances):
                         sample = sample.T
                         first, last = find_nonzero_block_cols(sample)
+                        if args.extra == "snpwindow":
+                            # take middle SNPs
+                            mid = (first + last) // 2
+                            half = 32 # middle 64 SNPs
+                            first = max(0, mid - half)
+                            last = min(sample.shape[1], mid + half)
+                            # TODO does dist[0] need to be set to 0?
+
                         sample = np.dstack([
                             sample[:, first:last],
                             dist[None, first:last].repeat(sample.shape[0], axis=0)
@@ -297,16 +328,16 @@ if __name__ == "__main__":
                         yield {
                             "input_ids": sample[..., 0],
                             "distances": sample[0, :, 1],
-                            "label": sel_bin,
+                            "label": sel,
                         }
                         
 
         features = make_features(label_dtype="float32", label_resolution="window")
         # Save tokenized data
         dataset = Dataset.from_generator(gen, features=features)
-        dataset.save_to_disk(f"dataset{VERSION}/tokenizedsel2")
+        dataset.save_to_disk(f"dataset{VERSION}/ft_selreg_snpwindow_tkns")
     elif mode == "ghist":
-        global_vars.L = 100000
+        global_vars.L = 50000
         t = args.extra
         def gen():
             it = get_iterator_ghist(
@@ -328,7 +359,7 @@ if __name__ == "__main__":
         features = make_features(include_pos=True)
         # Save tokenized data
         dataset = Dataset.from_generator(gen, features=features)
-        dataset.save_to_disk(f"GHIST/ghist_samples_{t}2")
+        dataset.save_to_disk(f"GHIST/ghist_samples_{t}")
     
     elif mode == "lai":
         t = args.extra
