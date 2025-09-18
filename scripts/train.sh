@@ -10,7 +10,7 @@
 #SBATCH --time=4:00:00                  # Maximum runtime (hh:mm:ss)
 #SBATCH --exclude=dgx002,dgx018
 
-torchrun --nproc_per_node=4 train_2d.py \
+torchrun --nproc_per_node=4 train.py \
     --dataset_path ./dataset/pt_snpwindow_tkns \
     --mlm_probability 0.15 \
     --span_mask_probability 0.15 \

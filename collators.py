@@ -126,7 +126,9 @@ class HaploSimpleDataCollator:
             non_pad_indices = non_pad_mask.nonzero(as_tuple=True)[0]
 
             # Subsample only from non-padded haplotypes
-            if len(non_pad_indices) >= self.subsample:
+            if len(non_pad_indices) == self.subsample:
+                selected = non_pad_indices
+            elif len(non_pad_indices) > self.subsample:
                 selected = non_pad_indices[
                     torch.randperm(len(non_pad_indices))[: self.subsample]
                 ]

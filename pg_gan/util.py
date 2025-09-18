@@ -107,8 +107,8 @@ def major_minor(matrix, neg1):
     """Note that matrix.shape[1] may not be S if we don't have enough SNPs"""
     n = matrix.shape[0]
     for j in range(matrix.shape[1]):
-        if np.count_nonzero(matrix[:,j] > 0) > (n/2): # count the 1's
-            matrix[:,j] = 1 - matrix[:,j]
+        if np.count_nonzero(matrix[:,j] == 1) > (n/2): # count the 1's
+            np.where(matrix[:, j] == 4, 4, 1 - matrix[:,j])
 
     # option to convert from 0/1 to -1/+1
     if neg1:

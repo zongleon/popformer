@@ -6,11 +6,13 @@ import argparse
 import os
 
 import numpy as np
-from datasets import Dataset, Features, Array2D, Value, List
+from datasets import Dataset, Features, Array2D, Value, List, DatasetDict
+import pandas as pd
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 from pg_gan import global_vars
+from pg_gan import util
 from pg_gan.generator import Generator
 from pg_gan.global_vars import DEFAULT_SEED, NUM_SNPS
 from pg_gan.real_data_random import RealDataRandomIterator
@@ -54,11 +56,13 @@ def read_outfile(file: str) -> Generator:
     return generator
 
 
-def get_iterator(pop: str, seed=None, custom_bed=None) -> RealDataRandomIterator:
+def get_iterator(pop: str, seed=None, custom_bed=None, use_bed=True) -> RealDataRandomIterator:
     h5_file = GENOME_PATH.format(pop=pop)
     bed_file = BED_PATH if custom_bed is None else custom_bed
     s = seed if seed is not None else DEFAULT_SEED
-    iterator = RealDataRandomIterator(filename=h5_file, bed_file=bed_file, seed=s)
+    iterator = RealDataRandomIterator(filename=h5_file, 
+                                      bed_file=bed_file if use_bed else None, 
+                                      seed=s)
 
     print(f"Loaded iterator: {pop} ({s})")
     print(f"{iterator.num_snps} SNPs | {iterator.num_samples} samples")
@@ -116,9 +120,9 @@ def tokenizer(sample: np.ndarray) -> np.ndarray:
 
     # padding
     n_haps = min(sample.shape[0], MAX_HAPS)
-    n_snps = min(sample.shape[1], NUM_SNPS)
+    n_snps = min(sample.shape[1], global_vars.NUM_SNPS)
     n_pad_haps = MAX_HAPS - n_haps
-    n_pad_snps = NUM_SNPS - n_snps
+    n_pad_snps = global_vars.NUM_SNPS - n_snps
 
     # start and end tokens
     bos_vec = np.full((n_haps, 1), BOS_TOKEN)
@@ -135,8 +139,8 @@ def tokenizer(sample: np.ndarray) -> np.ndarray:
         dists = np.hstack([dists, zeros_pad_vec])
 
     if n_pad_haps > 0:
-        pad_vec = np.full((n_pad_haps, NUM_SNPS + 2), PAD_TOKEN)
-        zeros_pad_vec = np.zeros((n_pad_haps, NUM_SNPS + 2))
+        pad_vec = np.full((n_pad_haps, global_vars.NUM_SNPS + 2), PAD_TOKEN)
+        zeros_pad_vec = np.zeros((n_pad_haps, global_vars.NUM_SNPS + 2))
         haps = np.vstack([haps, pad_vec])
         dists = np.vstack([dists, zeros_pad_vec])
 
@@ -150,7 +154,7 @@ def make_features(
     include_pos: bool = False
 ):
     features = {
-        "input_ids": Array2D((256, NUM_SNPS + 2), "int8"),
+        "input_ids": Array2D((256, global_vars.NUM_SNPS + 2), "int8"),
         "distances": List(Value("float32")),
     }
     if include_pop:
@@ -228,21 +232,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process dataset")
     parser.add_argument(
         "mode",
-        choices=[
-            "gen",
-            "runsimple",
-            "runrealsim",
-            "runsel",
-            "ghist",
-            "lai",
-            "realsel"
-        ],
         help="Mode to run",
     )
     parser.add_argument(
         "--n_samples", type=int, default=1000, help="Number of samples"
     )
     parser.add_argument("--extra", type=str, default="")
+    parser.add_argument("--extra2", type=str, default="")
     args = parser.parse_args()
 
     mode = args.mode
@@ -296,48 +292,47 @@ if __name__ == "__main__":
         features = make_features(label_dtype="int8", label_resolution="window")
         # Save tokenized data
         dataset = Dataset.from_generator(gen, features=features)
-        dataset.save_to_disk(f"dataset{VERSION}/tokenizedrealsim")
+        dataset.save_to_disk(f"dataset{VERSION}/ft_realsim_tkns")
     elif mode == "runsel":
+        allsamples: np.ndarray = np.load("1000g/combined_fixwindow/matrices.npy", mmap_mode="r")
+        alldistances: np.ndarray = np.load("1000g/combined_fixwindow/distances.npy", mmap_mode="r")
+        df = pd.read_csv("1000g/combined_fixwindow/metadata.csv")
+        filt = None
+        global_vars.NUM_SNPS = 512
+
         def gen():
-            for t, sel, sel_bin in zip(
-                ["neutral_3000", "sel1_600", "sel01_600", "sel05_600", "sel025_600"],
-                [0, 0.1, 0.01, 0.05, 0.025],
-                [0, 1, 1, 1, 1]
-            ):
-                for pop in ["CEU", "CHB", "YRI"]:
-                    samples: np.ndarray = np.load(f"1000g/{pop}/matrices_regions_{pop}_{t}.npy")[:2400]
-                    distances: np.ndarray = np.load(f"1000g/{pop}/distances_regions_{pop}_{t}.npy")[:2400]
+            sel = df["coeff"].to_numpy()            
+            sel = (sel > 0).astype(int)
 
-                    for sample, dist in zip(samples, distances):
-                        sample = sample.T
-                        first, last = find_nonzero_block_cols(sample)
-                        if args.extra == "snpwindow":
-                            # take middle SNPs
-                            mid = (first + last) // 2
-                            half = 32 # middle 64 SNPs
-                            first = max(0, mid - half)
-                            last = min(sample.shape[1], mid + half)
-                            # TODO does dist[0] need to be set to 0?
+            for i, (sample, dist, s) in enumerate(zip(allsamples, alldistances, sel)):
+                if not filt[i]:
+                    continue
+                sample = np.dstack([
+                    sample,
+                    dist[None, :].repeat(sample.shape[0], axis=0)
+                ])
+                sample = tokenizer(sample)
 
-                        sample = np.dstack([
-                            sample[:, first:last],
-                            dist[None, first:last].repeat(sample.shape[0], axis=0)
-                        ])
-                        sample = tokenizer(sample)
-
-                        yield {
-                            "input_ids": sample[..., 0],
-                            "distances": sample[0, :, 1],
-                            "label": sel,
-                        }
-                        
-
-        features = make_features(label_dtype="float32", label_resolution="window")
+                yield {
+                    "input_ids": sample[..., 0],
+                    "distances": sample[0, :, 1],
+                    "label": s,
+                }
+                    
+        features = make_features(label_dtype="int8", label_resolution="window")
         # Save tokenized data
-        dataset = Dataset.from_generator(gen, features=features)
-        dataset.save_to_disk(f"dataset{VERSION}/ft_selreg_snpwindow_tkns")
+        filt = df["pop"] != "YRI"
+        train_dataset = Dataset.from_generator(gen, features=features)
+        filt = df["pop"] == "YRI"
+        test_dataset = Dataset.from_generator(gen, features=features)
+        dataset = DatasetDict({
+            "train": train_dataset,
+            "test": test_dataset,
+        })
+        dataset.save_to_disk(f"dataset{VERSION}/ft_selbin_fixwindow_tkns")
     elif mode == "ghist":
         global_vars.L = 50000
+        global_vars.NUM_SNPS = 64
         t = args.extra
         def gen():
             it = get_iterator_ghist(
@@ -345,7 +340,7 @@ if __name__ == "__main__":
             )
             n_snps = it.num_snps
 
-            for i in range(0, n_snps, 16):
+            for i in range(0, n_snps, 32):
                 region = it.real_region(neg1=False, region_len=True, start_idx=i, return_pos=True)
                 if region is not None:
                     region, s, e, c = region
@@ -359,7 +354,7 @@ if __name__ == "__main__":
         features = make_features(include_pos=True)
         # Save tokenized data
         dataset = Dataset.from_generator(gen, features=features)
-        dataset.save_to_disk(f"GHIST/ghist_samples_{t}")
+        dataset.save_to_disk(f"GHIST/samples_{t}_{global_vars.L}")
     
     elif mode == "lai":
         t = args.extra
@@ -385,21 +380,25 @@ if __name__ == "__main__":
         dataset = Dataset.from_generator(gen, features=features)
         dataset.save_to_disk("LAI/tokenized")
     elif mode == "realsel":
-        t = args.extra
+        pop = args.extra
+        global_vars.NUM_SNPS = 512
+        global_vars.L = 100000
         def gen():
-            it = get_iterator("CEU", 0, "SEL/bed.bed")
-            n_snps = it.num_snps
-            n_yielded = 0
-            for i in range(0, n_snps, 16):
-                if n_yielded > n_samples:
-                    break
-                if int(it.pos_all[i]) > 1600000:
-                    break
-                region = it.real_region(neg1=False, region_len=True, start_idx=i, return_pos=True)
-                if region is not None:
+            it = get_iterator(pop, 0, None, use_bed=False) #"SEL/chr1.bed")
+            for chrom in range(1, 23):
+                bound = it._chrom_bounds(chrom)
+                tqdm.write(f"Pop {pop} | Chrom {chrom:<2d} | {bound}")
+                for i in range(0, 500000000, 100000):
+                    pos = it.find(i, chrom)
+                    if pos > bound[1]:
+                        break
+
+                    region = it.real_region(neg1=False, region_len=True, start_idx=pos, return_pos=True)
+                    if region is None:
+                        break
+                    
                     region, s, e, c = region
                     sample = tokenizer(region)
-                    n_yielded += 1
                     yield {
                         "input_ids": sample[..., 0], 
                         "distances": sample[0, :, 1], "start_pos": s, "end_pos": e,
@@ -409,4 +408,98 @@ if __name__ == "__main__":
         features = make_features(include_pos=True)
         # Save tokenized data
         dataset = Dataset.from_generator(gen, features=features)
-        dataset.save_to_disk("SEL/tokenized_CEU")
+        dataset.save_to_disk(f"SEL/tokenized_{pop}")
+    elif mode == "fasternn":
+        global_vars.NUM_SNPS = 512
+        def gen():
+            samples = np.load("FASTER_NN/fasternn_regions_majmin512.npy")
+            distances = np.load("FASTER_NN/fasternn_distances_majmin512.npy")
+            for sample, distance in zip(samples, distances):
+                region = np.dstack([
+                    sample,
+                    distance[None, :].repeat(sample.shape[0], axis=0)
+                ])
+                region = tokenizer(region)
+                yield {
+                    "input_ids": region[..., 0],
+                    "distances": region[0, :, 1]
+                }
+
+        # Save tokenized data
+        dataset = Dataset.from_generator(gen, features=make_features())
+        dataset.save_to_disk("FASTER_NN/tokenized_majmin512")
+    elif mode == "imputation":
+        global_vars.NUM_SNPS = 64
+        samples_list = []
+        it = get_iterator_ghist(
+            "IMP/KHV_infmasked_ref.h5",
+            None
+        )
+        it2 = get_iterator_ghist(
+            "IMP/KHV_infmasked_tgt.h5",
+            None
+        )
+        n_snps = it.num_snps
+        n_haps_ref = it.num_samples
+        n_haps = it.num_samples + it2.num_samples
+        tqdm.write(f"{n_snps}, {n_haps}")
+
+        region = positions = None
+
+        snp_ref = snp_tgt = 0
+        while snp_ref < n_snps:
+            cur_idx = snp_ref % global_vars.NUM_SNPS
+            if cur_idx == 0:
+                if snp_tgt != 0:
+                    # save if not first
+                    dist_vec = [0] + [(positions[j+1] - positions[j])/global_vars.L
+                        for j in range(len(positions)-1)]
+
+                    region = util.process_gt_dist(region, dist_vec,
+                        region_len=False, real=True, neg1=False)
+                    
+                    sample = tokenizer(region)
+
+                    samples_list.append({
+                        "input_ids": sample[..., 0],
+                        "distances": sample[0, :, 1]
+                    })
+
+                region = np.zeros((global_vars.NUM_SNPS, n_haps))
+                positions = np.zeros((global_vars.NUM_SNPS, ))
+            pos_ref = it.pos_all[snp_ref]
+            pos_tgt = it2.pos_all[snp_tgt]
+
+            while pos_ref < pos_tgt:
+                # mask the tgt sample at this pos
+                region[cur_idx, n_haps_ref:] = 4
+                region[cur_idx, :n_haps_ref] = it.haps_all[snp_ref, :]
+                positions[cur_idx] = it.pos_all[snp_ref]
+
+                snp_ref += 1
+                cur_idx = snp_ref % global_vars.NUM_SNPS
+                pos_ref = it.pos_all[snp_ref]
+
+            region[cur_idx, n_haps_ref:] = it2.haps_all[snp_tgt, :]
+            region[cur_idx, :n_haps_ref] = it.haps_all[snp_ref, :]
+            positions[cur_idx] = it.pos_all[snp_ref]
+
+            snp_ref += 1
+            snp_tgt += 1
+        
+        # Handle the last region if it wasn't saved
+        if region is not None and positions is not None:
+            dist_vec = [0] + [(positions[j+1] - positions[j])/global_vars.L
+                for j in range(len(positions)-1)]
+            region = util.process_gt_dist(region, dist_vec,
+                region_len=False, real=True, neg1=False)
+            sample = tokenizer(region)
+            samples_list.append({
+                "input_ids": sample[..., 0],
+                "distances": sample[0, :, 1]
+            })
+
+        features = make_features()
+        # Save tokenized data
+        dataset = Dataset.from_list(samples_list, features=features)
+        dataset.save_to_disk(f"IMP/infmasked_{global_vars.NUM_SNPS}")

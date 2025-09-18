@@ -4,6 +4,7 @@ dataset*/
 GHIST/
 LAI/
 SEL/
+FASTER_NN/
 1000g/
 models/
 tokenizer/
@@ -12,3 +13,10 @@ figs/
 *.pth
 *.pdf
 *.out
+*.csv
+*.gz*
+*.bed
+*.h5 
+*.arrow
+*.json
+*.npy

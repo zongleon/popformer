@@ -148,9 +148,12 @@ class RealDataRandomIterator:
 
         # mask
         self.mask_dict = read_mask(bed_file) if bed_file is not None else None
-        # print(self.mask_dict)
+        print(self.mask_dict)
 
         self.rng = default_rng(seed)
+
+        # cache for chrom bounds to speed repeated queries
+        self._chrom_bounds_cache = {}
 
         # useful for fastsimcoal and msmc
         if chrom_starts:
@@ -158,6 +161,72 @@ class RealDataRandomIterator:
             for x in list(self.chrom_all):
                 self.chrom_counts[int(x)] += 1
             print(self.chrom_counts)
+
+    # -------------------- new helpers for memory-friendly binary searches --------------------
+    def _chrom_value(self, idx):
+        """Return parsed integer chromosome at global index idx."""
+        v = self.chrom_all[idx]
+        return int(v)
+
+    def _chrom_bounds(self, chrom):
+        """Return (start, end) indices for chrom (end exclusive). Uses cache."""
+        if chrom in self._chrom_bounds_cache:
+            return self._chrom_bounds_cache[chrom]
+        n = self.num_snps
+        # find left boundary (first index with chrom >= target)
+        lo, hi = 0, n
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if self._chrom_value(mid) < chrom:
+                lo = mid + 1
+            else:
+                hi = mid
+        left = lo
+        # early exit if chrom not present
+        if left >= n or self._chrom_value(left) != chrom:
+            self._chrom_bounds_cache[chrom] = (-1, -1)
+            return -1, -1
+        # find right boundary (first index with chrom > target)
+        lo, hi = left, n
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if self._chrom_value(mid) <= chrom:
+                lo = mid + 1
+            else:
+                hi = mid
+        right = lo
+        self._chrom_bounds_cache[chrom] = (left, right)
+        return left, right
+
+    def _search_pos_within(self, chrom_left, chrom_right, pos):
+        """Binary search last index within [chrom_left, chrom_right) whose position <= pos.
+        Returns global index (>= chrom_left) or chrom_left if pos precedes first SNP.
+        """
+        lo, hi = chrom_left, chrom_right  # invariant: answer in [chrom_left-1, hi-1]
+        # We want last idx with pos_all[idx] <= pos. Use upper_bound style.
+        while lo < hi:
+            mid = (lo + hi) // 2
+            mid_pos = int(self.pos_all[mid])
+            if mid_pos <= pos:
+                lo = mid + 1
+            else:
+                hi = mid
+        idx = lo - 1
+        if idx < chrom_left:
+            return chrom_left  # earliest index in chrom (pos before first SNP)
+        return idx
+
+    def find(self, pos, chrom):
+        """Return the global SNP index of the first SNP at or before pos on chrom.
+        Memory-friendly manual binary searches over h5 datasets (no numpy.searchsorted).
+        If chrom not present, returns -1.
+        """
+        # normalize chrom type in case caller passed string
+        left, right = self._chrom_bounds(chrom)
+        if left == -1:
+            return -1
+        idx = self._search_pos_within(left, right, pos)
+        return idx
 
     def find_end(self, start_idx):
         """
@@ -297,41 +366,16 @@ if __name__ == "__main__":
     bed_file = sys.argv[2]
     iterator = RealDataRandomIterator(filename, global_vars.DEFAULT_SEED,
                                       bed_file, chrom_starts=True)
-    #out_file = open(sys.argv[4], 'w')
 
-    disc = tf.saved_model.load(sys.argv[3])
-    disc_recon = discriminator.OnePopModel(iterator.num_samples, global_vars.DEFAULT_SEED,
-                                           saved_model=disc)
-
-    start_time = datetime.datetime.now()
-    #for i in range(100):
-    #    region = iterator.real_region(True, False)
-    #    #pred = disc(region)
-    #    print("logit", pred)
 
     for i in range(1000):
         num_batch = 300
         regions, region_info = iterator.real_batch(batch_size=num_batch)
-        logits = disc_recon(regions, training=False)
-        probs = [get_prob(x) for x in logits]
-        #print(probs)
-        #print('min', min(probs), 'max', max(probs))
+        
         for j in range(num_batch):
             chrom = str(region_info[j][0])
             start = str(region_info[j][1])
             end = str(region_info[j][2])
-            #out_file.write("\t".join([chrom, start, end, str(probs[j])]) + "\n")
-            print(chrom, start, end, probs[j])
+            print(chrom, start, end)
             print(regions[j])
             input('enter')
-    #out_file.close()
-
-    end_time = datetime.datetime.now()
-    elapsed = end_time - start_time
-    print("time s:ms", elapsed.seconds,":",elapsed.microseconds)
-
-    # test find_end
-    '''for i in range(10):
-        start_idx = iterator.rng.integers(0, iterator.num_snps - \
-            global_vars.NUM_SNPS)
-        iterator.find_end(start_idx)'''

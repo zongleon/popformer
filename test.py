@@ -8,6 +8,7 @@ from datasets import load_from_disk
 from collators import HaploSimpleDataCollator
 from scipy.spatial.distance import cdist
 from sklearn.utils.class_weight import compute_class_weight
+from tqdm import tqdm
 
 def test_model():
     print("=" * 30)
@@ -25,7 +26,7 @@ def test_masked_lm(mpath, mlm, snpmlm, spanmlm):
         mpath
     )
 
-    ds = load_from_disk("dataset2/tokenized")
+    ds = load_from_disk("dataset4/pt_snpwindow_tkns")
     collator = HaploSimpleDataCollator(subsample=32, 
                                        mlm_probability=mlm,
                                        whole_snp_mask_probability=snpmlm,
@@ -98,60 +99,7 @@ def test_masked_lm(mpath, mlm, snpmlm, spanmlm):
     ax2.imshow(color(gt_img[0]), aspect='auto', cmap='Greys', interpolation="none")
     ax2.set_title("ground truth")
 
-    plt.savefig("figs/ex_maskedrecreation.png", dpi=300, bbox_inches="tight")
-
-def test_realsim_ft():
-    print("=" * 30)
-    print("Test: Finetuning on real/sim task")
-    model = HapbertaForSequenceClassification.from_pretrained(
-        "./models/hapberta2d_realsim/"
-    )
-
-    ds = load_from_disk("dataset/tokenizedrealsim").shuffle()
-
-    collator = HaploSimpleNormalDataCollator()
-
-    # make a batch
-    inputs = collator([ds[i] for i in range(4)])
-
-    haps = inputs["input_ids"].numpy()
-
-    print("Example input haps:")
-    print(haps[0])
-    print("Labels: ", inputs["labels"].numpy())
-
-    outputs = model(**inputs)
-    preds = outputs["logits"].argmax(dim=-1).cpu().numpy()
-    print("Output logits")
-    print(outputs["logits"])
-    print("Pred labels: ", preds)
-
-
-def test_sel_ft():
-    print("=" * 30)
-    print("Test: Finetuning on selection task")
-    model = HapbertaForSequenceClassification.from_pretrained(
-        "./models/hapberta2d_sel/",
-        num_labels=1,
-    )
-
-    ds = load_from_disk("dataset/tokenizedsel").shuffle()
-
-    collator = HaploSimpleNormalDataCollator(label_dtype=torch.float32)
-
-    # make a batch
-    inputs = collator([ds[i] for i in range(4)])
-
-    haps = inputs["input_ids"].numpy()
-
-    print("Example input haps:")
-    print(haps[0])
-    print("Labels: ", inputs["labels"].numpy())
-
-    outputs = model(**inputs)
-    print("Output logits")
-    print(outputs["logits"].detach())
-    # print(preds)
+    plt.savefig("figs/ex_maskedrecreation_new.png", dpi=300, bbox_inches="tight")
 
 
 def test_baseline():
@@ -159,8 +107,8 @@ def test_baseline():
     print("Test: Baseline column frequency approach")
     
     # Load data
-    ds = load_from_disk("dataset2/tokenized")
-    collator = HaploSimpleDataCollator()
+    ds = load_from_disk("dataset4/pt_snpwindow_tkns")
+    collator = HaploSimpleDataCollator(mlm_probability=0.15, span_mask_probability=0.15)
     
     inputs = collator([ds[0]])
     haps = inputs["input_ids"].numpy()
@@ -204,8 +152,8 @@ def test_baseline2():
     print("Test: Baseline nearest neighbor approach")
     
     # Load data
-    ds = load_from_disk("dataset2/tokenized")
-    collator = HaploSimpleDataCollator()
+    ds = load_from_disk("dataset4/pt_snpwindow_tkns")
+    collator = HaploSimpleDataCollator(mlm_probability=0.15, span_mask_probability=0.15)
     
     inputs = collator([ds[0]])
     haps = inputs["input_ids"].numpy()
@@ -280,14 +228,66 @@ def test_distance():
     plt.tight_layout()
     plt.savefig("figs/distance_histogram_lin.png", dpi=300)
 
+def test_selmodel(train=True):
+
+    if train:
+        data = load_from_disk("dataset4/ft_selbin_snpwindow64_tkns")
+    else:
+        data = load_from_disk("GHIST/ghist_samples_singlesweep_64")
+    data = data.shuffle()
+
+    model = HapbertaForSequenceClassification.from_pretrained(
+        "models/ft_sel_bin_long",
+        torch_dtype=torch.bfloat16,
+        num_labels=2
+    )
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # device = "cpu"
+    model.to(device)
+    model.eval()
+    # model.compile()
+
+    collator = HaploSimpleDataCollator(subsample=32)
+
+    batch_size = 32
+    preds = []
+    lbls = []
+
+    with torch.no_grad():
+        for i in tqdm(range(0, 1000, batch_size)):
+            batch_samples = [data[j] for j in range(i, min(i + batch_size, len(data)))]
+            batch = collator(batch_samples)
+            # Move tensors to device
+            for k in batch:
+                if isinstance(batch[k], torch.Tensor):
+                    batch[k] = batch[k].to(device=device)
+            
+            output = model(batch["input_ids"], batch["distances"], batch["attention_mask"])
+            preds.append(output["logits"])
+            if train:
+                lbls = lbls + [smp["label"] for smp in batch_samples]
+
+    all_preds = torch.cat(preds, dim=0).to(torch.float16).cpu().numpy().squeeze()
+    plt.figure(figsize=(8, 4))
+    if train:
+        lbls_np = np.array(lbls)
+        for label in np.unique(lbls_np):
+            plt.hist(all_preds[lbls_np == label, 1], bins=30, alpha=0.5, label=f"Label {label}")
+    else:
+        plt.hist(all_preds[:, 1], bins=30)
+    plt.legend()
+    plt.xlabel("Predicted logits")
+    plt.ylabel("Count")
+    plt.title("Histogram of predicted logits")
+    plt.savefig("figs/preds_histogram.png", dpi=300, bbox_inches="tight")
 
 if __name__ == "__main__":
     # test_model()
-    # test_baseline()
-    # test_baseline2()
-    # test_masked_lm("models/hapberta2d4", 0.15, 0., 0.15)
+    test_baseline()
+    test_baseline2()
+    test_masked_lm("models/pt", 0.15, 0., 0.15)
     # test_realsim_ft()
-    # test_sel_ft()
+    # test_selmodel(False)
 
-    test_distance()
+    # test_distance()
 
