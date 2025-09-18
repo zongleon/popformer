@@ -151,7 +151,8 @@ def make_features(
     label_dtype: str | None = None,
     label_resolution: str = None,
     include_pop: bool = False,
-    include_pos: bool = False
+    include_pos: bool = False,
+    include_snp_pos: bool = False,
 ):
     features = {
         "input_ids": Array2D((256, global_vars.NUM_SNPS + 2), "int8"),
@@ -163,6 +164,8 @@ def make_features(
         features["start_pos"] = Value(dtype="int32")
         features["end_pos"] = Value(dtype="int32")
         features["chrom"] = Value("int8")
+    if include_snp_pos:
+        features["positions"] = List(Value(dtype="int32"))
 
     if label_dtype is not None:
         if label_resolution == "window":
@@ -429,7 +432,7 @@ if __name__ == "__main__":
         dataset = Dataset.from_generator(gen, features=make_features())
         dataset.save_to_disk("FASTER_NN/tokenized_majmin512")
     elif mode == "imputation":
-        global_vars.NUM_SNPS = 64
+        global_vars.NUM_SNPS = 256
         samples_list = []
         it = get_iterator_ghist(
             "IMP/KHV_infmasked_ref.h5",
@@ -462,7 +465,8 @@ if __name__ == "__main__":
 
                     samples_list.append({
                         "input_ids": sample[..., 0],
-                        "distances": sample[0, :, 1]
+                        "distances": sample[0, :, 1],
+                        "positions": positions
                     })
 
                 region = np.zeros((global_vars.NUM_SNPS, n_haps))
@@ -496,10 +500,11 @@ if __name__ == "__main__":
             sample = tokenizer(region)
             samples_list.append({
                 "input_ids": sample[..., 0],
-                "distances": sample[0, :, 1]
+                "distances": sample[0, :, 1],
+                "positions": positions
             })
 
-        features = make_features()
+        features = make_features(include_snp_pos=True)
         # Save tokenized data
         dataset = Dataset.from_list(samples_list, features=features)
         dataset.save_to_disk(f"IMP/infmasked_{global_vars.NUM_SNPS}")

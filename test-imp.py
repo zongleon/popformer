@@ -1,3 +1,4 @@
+import sys
 from matplotlib.axes import Axes
 import numpy as np
 import pandas as pd
@@ -8,81 +9,9 @@ from collators import HaploSimpleDataCollator
 from datasets import load_from_disk
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+from scipy.stats import pearsonr
 
-def test(model, dataset, save_preds_path=None):
-    data = load_from_disk(dataset)
-
-    model = HapbertaForMaskedLM.from_pretrained(
-        model,
-        torch_dtype=torch.float16
-    )
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # device = "cpu"
-    model.to(device)
-    model.eval()
-
-    collator = HaploSimpleDataCollator(subsample=198)
-
-    loader = DataLoader(
-        data,
-        batch_size=16,
-        shuffle=False,
-        num_workers=4,
-        pin_memory=device.type == "cuda",
-        collate_fn=collator,
-    )
-    preds = []
-
-    with torch.inference_mode():
-        for batch in tqdm(loader):
-            # Move tensors to device
-            for k, v in batch.items():
-                if isinstance(v, torch.Tensor):
-                    batch[k] = v.to(device, non_blocking=True)
-            
-            output = model(batch["input_ids"], 
-                            batch["distances"], 
-                            batch["attention_mask"])
-            # only store output logits for masked positions
-            # logits = output["logits"] 
-            # mask = batch["input_ids"] == 4  # assuming 4 is the mask token id
-            # preds.append(logits[mask].detach().cpu())
-            preds.append(output["logits"].detach().cpu())
-
-    # Concatenate all logits, move to CPU, convert to numpy
-    preds = torch.cat(preds, dim=0).numpy()
-    print(f"Predictions shape: {preds.shape}")
-
-    np.save(save_preds_path, preds)
-
-
-def compute_metrics(preds_path, dataset, labels_path):
-    preds = np.load(preds_path)
-    labels = pd.read_csv(labels_path)
-
-    data = load_from_disk(dataset)
-    data = np.array(data["input_ids"])
-    data = data.transpose(1, 0, 2)
-    data = data.reshape(data.shape[0], -1)
-    print(data.shape)
-
-    mask = (data == 4).any(axis=0)
-
-    pred_labels = torch.softmax(torch.tensor(preds), dim=-1).numpy()
-    pred_labels = pred_labels.transpose(1, 0, 2, 3)  # shape: (haps, batch, snps, 6)
-    pred_labels = pred_labels.reshape(pred_labels.shape[0], -1, pred_labels.shape[-1])  # shape: (haps, batch*snps, 6)
-    pred_labels = pred_labels[:len(labels["genotypes"].iloc[0]), mask]
-    print(pred_labels.shape)
-
-    # print out first 10 preds and corresponding labels
-    for i in range(10):
-        true = labels["genotypes"].iloc[i]
-        pred = pred_labels[:, i, :2].argmax(axis=-1).astype(str).tolist()
-        print(f"True: {"".join([str(t) for t in true])}")
-        print(f"Pred: {"".join(pred)}") #, Prob: {pred_labels[0, i, pred]:.4f}")
-
-
-def test_masked_lm(dataset, model):
+def test_masked_lm(model, dataset):
     print("=" * 30)
     print("Test: Masked performance")
     # Load data
@@ -152,8 +81,127 @@ def test_masked_lm(dataset, model):
 
     plt.savefig("figs/imp.png", dpi=300, bbox_inches="tight")
 
-if __name__ == "__main__":
+
+def test(model, dataset, save_preds_path=None):
+    data = load_from_disk(dataset)
+
+    model = HapbertaForMaskedLM.from_pretrained(
+        model,
+        torch_dtype=torch.float16
+    )
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # device = "cpu"
+    model.to(device)
+    model.eval()
+
+    collator = HaploSimpleDataCollator(subsample=198)
+
+    loader = DataLoader(
+        data,
+        batch_size=8,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=device.type == "cuda",
+        collate_fn=collator,
+    )
+    preds = []
+
+    with torch.inference_mode():
+        for batch in tqdm(loader):
+            # Move tensors to device
+            for k, v in batch.items():
+                if isinstance(v, torch.Tensor):
+                    batch[k] = v.to(device, non_blocking=True)
+            
+            output = model(batch["input_ids"], 
+                            batch["distances"], 
+                            batch["attention_mask"])
+            # only store output logits for masked positions
+            # logits = output["logits"] 
+            # mask = batch["input_ids"] == 4  # assuming 4 is the mask token id
+            # preds.append(logits[mask].detach().cpu())
+            preds.append(output["logits"].detach().cpu())
+
+    # Concatenate all logits, move to CPU, convert to numpy
+    preds = torch.cat(preds, dim=0).numpy()
+    print(f"Predictions shape: {preds.shape}")
+
+    np.save(save_preds_path, preds)
+
+
+def compute_metrics(preds_path, dataset, labels_path):
+    preds = np.load(preds_path)
+    labels = pd.read_csv(labels_path)
+
+    data = load_from_disk(dataset)
+    positions = np.array(data["positions"]).flatten()
     
-    # test_masked_lm("models/pt", "IMP/infmasked_64")
-    # test("models/pt", "IMP/infmasked_64", "IMP/preds.npy")
-    compute_metrics("IMP/preds.npy", "IMP/infmasked_64", "IMP/masked_snps.csv")
+    data = np.array(data["input_ids"])
+    data = data.transpose(1, 0, 2)
+    data = data[:, :, 1:-1]
+    data = data.reshape(data.shape[0], -1)
+
+    mask = (data == 4).any(axis=0)
+
+    positions = positions[mask]
+    np.savetxt("testpos.out", positions, "%d")
+    np.savetxt("testpos2.out", labels["pos"], "%d")
+
+    # Find indices in labels["pos"] that are not in positions
+    mask_labels = ~labels["pos"].isin(positions)
+    labels = labels[~mask_labels].reset_index(drop=True)
+
+    preds = preds[:, :, 1:-1, :]
+    pred_labels = torch.softmax(torch.tensor(preds), dim=-1).numpy()
+    pred_labels = pred_labels.transpose(1, 0, 2, 3)  # shape: (haps, batch, snps, 6)
+    pred_labels = pred_labels.reshape(pred_labels.shape[0], -1, pred_labels.shape[-1])  # shape: (haps, batch*snps, 6)
+    pred_labels = pred_labels[:len(labels["genotypes"].iloc[0]), mask]
+    print(pred_labels.shape)
+
+    # print out first 10 preds and corresponding labels
+    for i in range(10):
+        true = labels["genotypes"].iloc[i]
+        pred = pred_labels[:, i, :2].argmax(axis=-1).astype(str).tolist()
+        print(f"True: {"".join([str(t) for t in true])}")
+        print(f"Pred: {"".join(pred)}") #, Prob: {pred_labels[0, i, pred]:.4f}")
+
+    # preprocess true labels
+    true = labels["genotypes"].apply(lambda x: [int(c) for c in x]).tolist()
+    true = np.array(true).T
+    
+    # Convert true and pred_labels (shape: n_haps, n_snps) to genotypes
+    # Each consecutive pair of haps is summed to produce one genotype (0, 1, or 2)
+
+    def haps_to_genotypes(haps):
+        # haps: (n_haps, n_snps)
+        # group every two haps and sum along axis 0
+        return haps.reshape(-1, 2, haps.shape[1]).sum(axis=1)
+
+    # Convert true haplotypes to genotypes
+    true_genotypes = haps_to_genotypes(true)
+    # Convert predicted haplotypes to genotypes
+    pred_haps = pred_labels[:, :, :2].argmax(axis=-1)  # shape: (n_haps, n_snps)
+    pred_genotypes = haps_to_genotypes(pred_haps)
+
+    true_flat = true_genotypes.flatten()
+    pred_flat = pred_genotypes.flatten()
+
+    # np.savetxt("true_pred_flat.txt", np.vstack([true_flat, pred_flat]).T, fmt="%d", header="true\tpred")
+
+    r, _ = pearsonr(true_flat, pred_flat)
+    r2 = r ** 2
+
+    # Compute error rate (fraction of mismatches)
+    error_rate = (true_genotypes != pred_genotypes).mean()
+
+    print(f"r: {r:.4f}")
+    print(f"r^2: {r2:.4f}")
+    print(f"Error rate: {error_rate:.4f}")
+
+
+if __name__ == "__main__":
+    model = sys.argv[1]
+    n_snps = sys.argv[2]
+    test_masked_lm(model, f"IMP/infmasked_{n_snps}")
+    test(model, f"IMP/infmasked_{n_snps}", f"IMP/preds_{n_snps}.npy")
+    compute_metrics(f"IMP/preds_{n_snps}.npy", f"IMP/infmasked_{n_snps}", "IMP/masked_snps.csv")

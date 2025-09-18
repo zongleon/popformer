@@ -20,6 +20,7 @@ class HaploSimpleDataCollator:
     mlm_probability: float = 0.
     whole_snp_mask_probability: float = 0.
     span_mask_probability: float = 0.
+    oversample_ones = False
     pad_batch = False
     label_dtype: torch.dtype = None
 
@@ -29,6 +30,7 @@ class HaploSimpleDataCollator:
         mlm_probability=0.,
         whole_snp_mask_probability=0.,
         span_mask_probability=0.,
+        oversample_ones = False,
         pad_batch=True,
         label_dtype=None,
     ):
@@ -36,6 +38,7 @@ class HaploSimpleDataCollator:
         self.mlm_probability = mlm_probability
         self.whole_snp_mask_probability = whole_snp_mask_probability
         self.span_mask_probability = span_mask_probability
+        self.oversample_ones = oversample_ones
         self.pad_batch = pad_batch
         self.label_dtype = label_dtype
 
@@ -47,7 +50,7 @@ class HaploSimpleDataCollator:
         """
         labels = inputs.clone()
         probability_matrix = torch.full(labels.shape, self.mlm_probability)
-        if self.mlm_probability > 0:
+        if self.mlm_probability > 0 and self.oversample_ones:
             # Oversample 1s: set higher probability for tokens == 1
             probability_matrix[inputs == 1] = 0.5  # e.g., 50% chance for 1s
 
