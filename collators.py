@@ -16,7 +16,7 @@ class HaploSimpleDataCollator:
     eos_token_id = 3
     mask_token_id = 4
     pad_token_id = 5
-    subsample: int = 32
+    subsample: tuple[int, int] = (32, 32)
     mlm_probability: float = 0.
     whole_snp_mask_probability: float = 0.
     span_mask_probability: float = 0.
@@ -26,7 +26,7 @@ class HaploSimpleDataCollator:
 
     def __init__(
         self,
-        subsample=32,
+        subsample: tuple[int, int]=(32, 32),
         mlm_probability=0.,
         whole_snp_mask_probability=0.,
         span_mask_probability=0.,
@@ -34,6 +34,8 @@ class HaploSimpleDataCollator:
         pad_batch=True,
         label_dtype=None,
     ):
+        if subsample[0] > subsample[1]:
+            raise ValueError("subsample[0] must be <= subsample[1]")
         self.subsample = subsample
         self.mlm_probability = mlm_probability
         self.whole_snp_mask_probability = whole_snp_mask_probability
@@ -127,13 +129,19 @@ class HaploSimpleDataCollator:
             # Identify non-padded haplotypes (rows not all pad_token_id)
             non_pad_mask = ~(input_ids == self.pad_token_id).all(dim=1)
             non_pad_indices = non_pad_mask.nonzero(as_tuple=True)[0]
+            n_non_pad = len(non_pad_indices)
 
             # Subsample only from non-padded haplotypes
-            if len(non_pad_indices) == self.subsample:
+            if self.subsample[0] == self.subsample[1]:
+                subs = self.subsample[0]
+            else:
+                subs = torch.randint(self.subsample[0], min(self.subsample[1], n_non_pad) + 1, (1,)).item()
+        
+            if n_non_pad == subs:
                 selected = non_pad_indices
-            elif len(non_pad_indices) > self.subsample:
+            elif n_non_pad > subs:
                 selected = non_pad_indices[
-                    torch.randperm(len(non_pad_indices))[: self.subsample]
+                    torch.randperm(n_non_pad)[: subs]
                 ]
             else:
                 raise RuntimeError(

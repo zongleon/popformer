@@ -432,7 +432,7 @@ if __name__ == "__main__":
         dataset = Dataset.from_generator(gen, features=make_features())
         dataset.save_to_disk("FASTER_NN/tokenized_majmin512")
     elif mode == "imputation":
-        global_vars.NUM_SNPS = 256
+        global_vars.NUM_SNPS = 512
         samples_list = []
         it = get_iterator_ghist(
             "IMP/KHV_infmasked_ref.h5",

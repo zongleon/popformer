@@ -44,7 +44,7 @@ config = RobertaConfig(
 model = HapbertaForMaskedLM(config)
 
 # data collator
-data_collator = HaploSimpleDataCollator(subsample=32,
+data_collator = HaploSimpleDataCollator(subsample=(30, 200),
                                         mlm_probability=args.mlm_probability,
                                         span_mask_probability=args.span_mask_probability)
 

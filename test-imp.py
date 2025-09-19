@@ -10,13 +10,14 @@ from datasets import load_from_disk
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from scipy.stats import pearsonr
+from cyvcf2 import VCF
 
-def test_masked_lm(model, dataset):
+def test_masked_lm(model_path, dataset):
     print("=" * 30)
     print("Test: Masked performance")
     # Load data
     model = HapbertaForMaskedLM.from_pretrained(
-        model
+        model_path
     )
 
     ds = load_from_disk(dataset)
@@ -79,7 +80,7 @@ def test_masked_lm(model, dataset):
     # ax2.imshow(color(gt_img[0]), aspect='auto', cmap='Greys', interpolation="none")
     # ax2.set_title("ground truth")
 
-    plt.savefig("figs/imp.png", dpi=300, bbox_inches="tight")
+    plt.savefig(f"figs/imp_{model_path.split("/")[-1]}_{dataset.split("/")[-1]}.png", dpi=300, bbox_inches="tight")
 
 
 def test(model, dataset, save_preds_path=None):
@@ -155,7 +156,7 @@ def compute_metrics(preds_path, dataset, labels_path):
     pred_labels = torch.softmax(torch.tensor(preds), dim=-1).numpy()
     pred_labels = pred_labels.transpose(1, 0, 2, 3)  # shape: (haps, batch, snps, 6)
     pred_labels = pred_labels.reshape(pred_labels.shape[0], -1, pred_labels.shape[-1])  # shape: (haps, batch*snps, 6)
-    pred_labels = pred_labels[:len(labels["genotypes"].iloc[0]), mask]
+    pred_labels = pred_labels[-len(labels["genotypes"].iloc[0]):, mask]
     print(pred_labels.shape)
 
     # print out first 10 preds and corresponding labels
@@ -199,9 +200,49 @@ def compute_metrics(preds_path, dataset, labels_path):
     print(f"Error rate: {error_rate:.4f}")
 
 
+def test_impute():
+    vcf = VCF("IMP/impute5.out.vcf.gz")
+    imputeds = []
+    for record in vcf:
+        try:
+            # was imputed
+            record.INFO["IMP"]
+        except KeyError:
+            continue
+
+        chrom = record.CHROM
+        pos = record.POS
+        gts = record.genotypes
+        gts = "".join([str(gt[0]) + str(gt[1]) for gt in gts])
+        imputeds.append(gts)
+
+    labels = pd.read_csv("IMP/masked_snps.csv")
+    true = labels["genotypes"].apply(lambda x: [int(c) for c in x]).tolist()
+    true = np.array(true).T
+    imps = pd.Series(imputeds).apply(lambda x: [int(c) for c in x]).tolist()
+    imps = np.array(imps).T
+
+    print(true.shape, imps.shape)
+        
+    true_flat = true.flatten()
+    imps_flat = imps.flatten()
+
+    # np.savetxt("true_pred_flat.txt", np.vstack([true_flat, pred_flat]).T, fmt="%d", header="true\tpred")
+
+    r, _ = pearsonr(true_flat, imps_flat)
+    r2 = r ** 2
+
+    # Compute error rate (fraction of mismatches)
+    error_rate = (true_flat != imps_flat).mean()
+
+    print(f"r: {r:.4f}")
+    print(f"r^2: {r2:.4f}")
+    print(f"Error rate: {error_rate:.4f}")
+
 if __name__ == "__main__":
     model = sys.argv[1]
     n_snps = sys.argv[2]
     test_masked_lm(model, f"IMP/infmasked_{n_snps}")
-    test(model, f"IMP/infmasked_{n_snps}", f"IMP/preds_{n_snps}.npy")
-    compute_metrics(f"IMP/preds_{n_snps}.npy", f"IMP/infmasked_{n_snps}", "IMP/masked_snps.csv")
+    test(model, f"IMP/infmasked_{n_snps}", f"IMP/preds_pt4_{n_snps}.npy")
+    compute_metrics(f"IMP/preds_pt4_{n_snps}.npy", f"IMP/infmasked_{n_snps}", "IMP/masked_snps.csv")
+    # test_impute()
