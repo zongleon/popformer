@@ -1,25 +1,26 @@
 import numpy as np
 from tqdm import tqdm
 import torch
-from models import HapbertaForMaskedLM, HapbertaForSequenceClassification
-from datasets import load_from_disk
+from models import HapbertaForMaskedLM
+from datasets import load_from_disk, DatasetDict
 from collators import HaploSimpleDataCollator
 from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 import umap
 
-ds = load_from_disk("dataset4/pt_snpwindow_tkns")
-collator = HaploSimpleDataCollator(mlm_probability=0., 
-                                   whole_snp_mask_probability=0., 
-                                   span_mask_probability=0., 
-                                   subsample=32)
+dsd = {}
+pops = ["CEU", "CHB", "YRI", "ESN", "CHS", "GBR"]
+for pop in pops:
+    ds = load_from_disk(f"SEL/tokenized_{pop}")
+    dsd[pop] = ds.take(64)
+dsd = DatasetDict(dsd)
 
-ds = ds.shuffle().select(range(512))
+collator = HaploSimpleDataCollator(subsample=None)
 
 # plot first 2 PCs
 colors = {'CEU': 'tab:blue', 'CHB': 'tab:orange', 'YRI': 'tab:green', 
           'ESN': 'tab:purple', 'CHS': 'tab:red', 'GBR': 'tab:brown'}
-pop_colors = [colors[label] for label in ds["pop"]]
+# pop_colors = [colors[label] for label in pops]
 # pop_colors = np.array(pop_colors).repeat(32, axis=0)
 
 # model = HapbertaForMaskedLM.from_pretrained(
@@ -35,38 +36,40 @@ model.eval()
 # model.compile()
 
 def preds():
-    batch_size = 8
-    embeds = []
+    batch_size = 4
+    lbls = []
+    all_embeds = []
+    with torch.inference_mode():
+        for pop in pops:
+            embeds = []
+            ds = dsd[pop]
+            for i in tqdm(range(0, len(ds), batch_size)):
+                batch_samples = [ds[j] for j in range(i, min(i + batch_size, len(ds)))]
+                batch = collator(batch_samples)
+                # Move tensors to device
+                for k in batch:
+                    if isinstance(batch[k], torch.Tensor):
+                        batch[k] = batch[k].to("cuda")
+                
+                output = model(batch["input_ids"], batch["distances"], batch["attention_mask"],
+                            labels=None,
+                            return_hidden_states=True)
+                
+                hidden = output["hidden_states"].mean(axis=2)  # (batch_size, n_haps, n_snps, hidden_size)
+                n_haps = hidden.shape[1]
+                embeds.append(hidden.permute(1, 0, 2).reshape(n_haps, -1).cpu().numpy())  # (n_haps, batch_size * hidden_size)
+                # hidden = output["hidden_states"].mean(axis=(0, 2)).cpu().numpy()
+                # n_haps = hidden.shape[0]
+                # embeds.append(hidden)
 
-    with torch.no_grad():
-        for i in tqdm(range(0, len(ds), batch_size)):
-            batch_samples = [ds[j] for j in range(i, min(i + batch_size, len(ds)))]
-            batch = collator(batch_samples)
-            # Move tensors to device
-            for k in batch:
-                if isinstance(batch[k], torch.Tensor):
-                    batch[k] = batch[k].to("cuda")
-            
-            output = model(batch["input_ids"], batch["distances"], batch["attention_mask"],
-                        labels=None,
-                        return_hidden_states=True)
-            
-            embeds.append(output["hidden_states"].mean(axis=(1, 2)).to(torch.float16).cpu().numpy())
-            # embeds.append(output["hidden_states"].mean(axis=(2)).to(torch.float16).cpu().numpy())
-        
-
-    embeds = np.concatenate(embeds, axis=0)
-    # print(embeds.shape)
-    # embeds = embeds.reshape(embeds.shape[0] * embeds.shape[1], -1)
-    # print(embeds.shape)
-
-    # embeds_pooled = np.mean(embeds, axis=(1, 2))
-    # embeds_pooled2 = embeds[:, 0, :, :].mean(axis=1)
-    return embeds, None
-    # return embeds_pooled, embeds_pooled2
-
+            embeds = np.concatenate(embeds, axis=1)
+            all_embeds.append(embeds)
+            lbls.extend([pop] * n_haps)
+    
+    return np.concatenate(all_embeds, axis=0), lbls
+    
 # pca on embeds
-def pca(embeds):
+def pca(embeds, pop_colors):
     embed_pca = PCA(n_components=10)
     embed_pca.fit(embeds)
 
@@ -92,7 +95,7 @@ def pca(embeds):
     plt.title("pca")
     plt.savefig("figs/embeds_pca.png", dpi=300)
 
-def um(embeds):
+def um(embeds, pop_colors):
     # umap on embeds
     reducer = umap.UMAP()
     embedding = reducer.fit_transform(embeds)
@@ -163,6 +166,7 @@ def attns(model):
     plt.savefig("figs/hap_attn_snp_4.png", dpi=300)
 
 
-embeds1, embeds2 = preds()
-pca(embeds1)
-um(embeds1)
+embeds, lbls = preds()
+pop_colors = [colors[label] for label in lbls]
+pca(embeds, pop_colors)
+um(embeds, pop_colors)

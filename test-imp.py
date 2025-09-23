@@ -21,7 +21,7 @@ def test_masked_lm(model_path, dataset):
     )
 
     ds = load_from_disk(dataset)
-    collator = HaploSimpleDataCollator(subsample=198)
+    collator = HaploSimpleDataCollator(subsample=None)
 
     # make a batch
     inputs = collator([ds[0]])
@@ -95,7 +95,7 @@ def test(model, dataset, save_preds_path=None):
     model.to(device)
     model.eval()
 
-    collator = HaploSimpleDataCollator(subsample=198)
+    collator = HaploSimpleDataCollator(subsample=None)
 
     loader = DataLoader(
         data,
@@ -244,5 +244,5 @@ if __name__ == "__main__":
     n_snps = sys.argv[2]
     test_masked_lm(model, f"IMP/infmasked_{n_snps}")
     test(model, f"IMP/infmasked_{n_snps}", f"IMP/preds_pt4_{n_snps}.npy")
-    compute_metrics(f"IMP/preds_pt4_{n_snps}.npy", f"IMP/infmasked_{n_snps}", "IMP/masked_snps.csv")
+    compute_metrics(f"IMP/preds_pt5_{n_snps}.npy", f"IMP/infmasked_{n_snps}", "IMP/masked_snps.csv")
     # test_impute()

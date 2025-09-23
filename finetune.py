@@ -36,7 +36,7 @@ elif MODE == "pop":
 else:
     raise ValueError("Incorrect mode selected")
 
-dataset = load_from_disk(dataset_path)
+dataset = load_from_disk(dataset_path).shuffle(42)
 
 if MODE == "pop":
     # dataset = dataset.shuffle().select(range(10000))
@@ -53,9 +53,8 @@ if MODE == "pop":
     dataset = dataset.map(process_pop, keep_in_memory=True)
 
 # Split dataset
-dataset = dataset.train_test_split(test_size=0.1)
 train_dataset = dataset["train"]
-eval_dataset = dataset["test"]
+eval_dataset = dataset["test"].take(1024)
 
 if args.from_init:
     model = HapbertaForSequenceClassification(RobertaConfig(

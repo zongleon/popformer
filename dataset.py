@@ -297,9 +297,9 @@ if __name__ == "__main__":
         dataset = Dataset.from_generator(gen, features=features)
         dataset.save_to_disk(f"dataset{VERSION}/ft_realsim_tkns")
     elif mode == "runsel":
-        allsamples: np.ndarray = np.load("1000g/combined_fixwindow/matrices.npy", mmap_mode="r")
-        alldistances: np.ndarray = np.load("1000g/combined_fixwindow/distances.npy", mmap_mode="r")
-        df = pd.read_csv("1000g/combined_fixwindow/metadata.csv")
+        allsamples: np.ndarray = np.load("1000g/combined_pan_2/matrices.npy", mmap_mode="r")
+        alldistances: np.ndarray = np.load("1000g/combined_pan_2/distances.npy", mmap_mode="r")
+        df = pd.read_csv("1000g/combined_pan_2/metadata.csv")
         filt = None
         global_vars.NUM_SNPS = 512
 
@@ -324,7 +324,7 @@ if __name__ == "__main__":
                     
         features = make_features(label_dtype="int8", label_resolution="window")
         # Save tokenized data
-        filt = df["pop"] != "YRI"
+        filt = df["pop"] == "pan_2"
         train_dataset = Dataset.from_generator(gen, features=features)
         filt = df["pop"] == "YRI"
         test_dataset = Dataset.from_generator(gen, features=features)
@@ -388,7 +388,7 @@ if __name__ == "__main__":
         global_vars.L = 100000
         def gen():
             it = get_iterator(pop, 0, None, use_bed=False) #"SEL/chr1.bed")
-            for chrom in range(1, 23):
+            for chrom in range(1, 2):
                 bound = it._chrom_bounds(chrom)
                 tqdm.write(f"Pop {pop} | Chrom {chrom:<2d} | {bound}")
                 for i in range(0, 500000000, 100000):
@@ -432,7 +432,22 @@ if __name__ == "__main__":
         dataset = Dataset.from_generator(gen, features=make_features())
         dataset.save_to_disk("FASTER_NN/tokenized_majmin512")
     elif mode == "imputation":
-        global_vars.NUM_SNPS = 512
+
+        def shuffle(arr, n):
+            # arr is (n_snps, n_haps)
+            arr_t = arr.T  # (n_haps, n_snps)
+            n_haps, n_snps = arr_t.shape
+            tgt = arr_t[-n:, :]
+            ref = arr_t[:-n, :]
+            tgt_positions = np.random.choice(n_haps, n, replace=False)
+            tgt_positions = np.sort(tgt_positions)
+            new_arr = np.zeros_like(arr_t)
+            new_arr[tgt_positions, :] = tgt
+            remaining_positions = np.setdiff1d(np.arange(n_haps), tgt_positions)
+            new_arr[remaining_positions, :] = ref
+            return new_arr.T
+
+        global_vars.NUM_SNPS = 256
         samples_list = []
         it = get_iterator_ghist(
             "IMP/KHV_infmasked_ref.h5",
@@ -442,6 +457,7 @@ if __name__ == "__main__":
             "IMP/KHV_infmasked_tgt.h5",
             None
         )
+        n = it2.num_samples
         n_snps = it.num_snps
         n_haps_ref = it.num_samples
         n_haps = it.num_samples + it2.num_samples
@@ -455,6 +471,7 @@ if __name__ == "__main__":
             if cur_idx == 0:
                 if snp_tgt != 0:
                     # save if not first
+                    region = shuffle(region, n)
                     dist_vec = [0] + [(positions[j+1] - positions[j])/global_vars.L
                         for j in range(len(positions)-1)]
 
@@ -493,6 +510,7 @@ if __name__ == "__main__":
         
         # Handle the last region if it wasn't saved
         if region is not None and positions is not None:
+            region = shuffle(region, n)
             dist_vec = [0] + [(positions[j+1] - positions[j])/global_vars.L
                 for j in range(len(positions)-1)]
             region = util.process_gt_dist(region, dist_vec,

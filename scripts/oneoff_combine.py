@@ -58,7 +58,7 @@ def main(path, out):
                     distances[idx, :n_snps] = dist[None, :n_snps]
 
             # metadata
-            data = [(seed, 
+            data = [(0, 0, 0, 0, 0, 0, 0, seed, 
                      -1 if "neutral" in t else 25000,
                      sel, 0, 0, "old", pop) for seed in range(n)]
             
