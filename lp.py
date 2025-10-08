@@ -9,7 +9,7 @@ from sklearn.metrics import accuracy_score, f1_score, mean_squared_error, mean_a
 parser = argparse.ArgumentParser(description="Linear probe for sel2 classification")
 parser.add_argument("--mode", type=str, default="sel2", help="Mode: realsim/sel/sel2/pop")
 parser.add_argument("--dataset_path", type=str, default="./dataset4/ft_selbin_fixwindow_tkns", help="Path to tokenized dataset")
-parser.add_argument("--output_path", type=str, default="./models/lp_sel_bin", help="Output path for model checkpoints")
+parser.add_argument("--output_path", type=str, default="./models/lp_sel_bin_pan2", help="Output path for model checkpoints")
 parser.add_argument("--num_epochs", type=int, default=10, help="Number of training epochs")
 parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training and evaluation")
 parser.add_argument("--learning_rate", type=float, default=1e-4, help="Learning rate for classifier head")
@@ -24,13 +24,18 @@ elif args.mode == "sel2":
 
 # Load dataset
 dataset = load_from_disk(args.dataset_path)
-dataset = dataset.shuffle()
+# dataset = dataset.shuffle()
+
+dataset = dataset["train"].train_test_split(0.01, shuffle=True)
 train_dataset = dataset["train"]
-eval_dataset = dataset["test"].take(512)
+eval_dataset = dataset["test"]
+# train_dataset = dataset["train"]
+# eval_dataset = dataset["test"].take(512)
+
 
 # Load pretrained model
 model = HapbertaForSequenceClassification.from_pretrained(
-    "./models/pt",
+    "./models/pt2",
     num_labels=num_labels,
     classifier_dropout=0
 )
@@ -40,7 +45,7 @@ for name, param in model.named_parameters():
     if "classifier" not in name:
         param.requires_grad = False
 
-collator = HaploSimpleDataCollator(subsample=32, label_dtype=typ)
+collator = HaploSimpleDataCollator(subsample=(32, 64), label_dtype=typ)
 
 training_args = TrainingArguments(
     output_dir=args.output_path,

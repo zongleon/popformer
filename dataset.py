@@ -155,7 +155,7 @@ def make_features(
     include_snp_pos: bool = False,
 ):
     features = {
-        "input_ids": Array2D((256, global_vars.NUM_SNPS + 2), "int8"),
+        "input_ids": Array2D((MAX_HAPS, global_vars.NUM_SNPS + 2), "int8"),
         "distances": List(Value("float32")),
     }
     if include_pop:
@@ -173,7 +173,7 @@ def make_features(
         elif label_resolution == "snp":
             features["label"] = List(Value(label_dtype))
         elif label_resolution == "snphap":
-            features["label"] = Array2D((256, NUM_SNPS + 2), label_dtype)
+            features["label"] = Array2D((MAX_HAPS, NUM_SNPS + 2), label_dtype)
         else:
             raise ValueError(
                 "Invalid label resolution"
@@ -222,6 +222,7 @@ def find_nonzero_block_cols(sample: np.ndarray) -> tuple[int, int]:
     Returns (first_idx, last_idx), inclusive.
     If all cols are zero, returns (None, None).
     """
+    assert len(sample.shape) == 2, "sample should be a 2D array of (haps, snps)"
     # sample: shape (n_rows, n_cols)
     nonzero_mask = ~(np.all(sample == 0, axis=0))
     nonzero_indices = np.where(nonzero_mask)[0]
@@ -258,7 +259,6 @@ if __name__ == "__main__":
                 global_vars.NUM_SNPS = 512
                 samples = get_data(pop=pop, n_samples=n_samples, seed=0, snp=True)
                 save_data(pop, samples)
-
     elif mode == "runsimple":
         def gen():
             for pop in ["CEU", "CHB", "YRI", "CHS", "ESN", "GBR"]:
@@ -310,6 +310,12 @@ if __name__ == "__main__":
             for i, (sample, dist, s) in enumerate(zip(allsamples, alldistances, sel)):
                 if not filt[i]:
                     continue
+
+                # only nonzero
+                first, last = find_nonzero_block_cols(sample)
+                sample = sample[:, first:last]
+                dist = dist[first:last]
+
                 sample = np.dstack([
                     sample,
                     dist[None, :].repeat(sample.shape[0], axis=0)
@@ -334,71 +340,59 @@ if __name__ == "__main__":
         })
         dataset.save_to_disk(f"dataset{VERSION}/ft_selbin_fixwindow_tkns")
     elif mode == "ghist":
-        global_vars.L = 50000
-        global_vars.NUM_SNPS = 64
+        global_vars.L = 100000
+        global_vars.NUM_SNPS = 512
         t = args.extra
         def gen():
             it = get_iterator_ghist(
                 f"GHIST/process/GHIST_2025_{t}.21.testing_process.h5", "GHIST/raw/21.accessible.bed"
             )
             n_snps = it.num_snps
+            bound = it._chrom_bounds(21)
 
-            for i in range(0, n_snps, 32):
-                region = it.real_region(neg1=False, region_len=True, start_idx=i, return_pos=True)
-                if region is not None:
-                    region, s, e, c = region
-                    sample = tokenizer(region)
-                    yield {
-                        "input_ids": sample[..., 0], 
-                        "distances": sample[0, :, 1], "start_pos": s, "end_pos": e,
-                        "chrom": c
-                    }
+            for i in range(0, 500000000, 100000):
+                pos = it.find(i, 21)
+                if pos > bound[1]:
+                    break
+
+                region = it.real_region(neg1=False, region_len=True, start_idx=pos, return_pos=True)
+                if region is None:
+                    continue
+                
+                region, s, e, c = region
+                sample = tokenizer(region)
+                yield {
+                    "input_ids": sample[..., 0], 
+                    "distances": sample[0, :, 1], "start_pos": s, "end_pos": e,
+                    "chrom": c
+                }
+
 
         features = make_features(include_pos=True)
         # Save tokenized data
         dataset = Dataset.from_generator(gen, features=features)
-        dataset.save_to_disk(f"GHIST/samples_{t}_{global_vars.L}")
+        dataset.save_to_disk(f"GHIST/samples_rl{t}_{global_vars.L}")
     
     elif mode == "lai":
-        t = args.extra
-        def gen():
-            it = get_iterator("CEU", 0)
-            n_snps = it.num_snps
-
-            for i in range(0, n_snps, 64):
-                if i / 64 > n_samples:
-                    break
-                region = it.real_region(neg1=False, region_len=True, start_idx=i, return_pos=True)
-                if region is not None:
-                    region, s, e, c = region
-                    sample = tokenizer(region)
-                    yield {
-                        "input_ids": sample[..., 0], 
-                        "distances": sample[0, :, 1], "start_pos": s, "end_pos": e,
-                        "chrom": c
-                    }
-
-        features = make_features(include_pos=True)
-        # Save tokenized data
-        dataset = Dataset.from_generator(gen, features=features)
-        dataset.save_to_disk("LAI/tokenized")
+        pass
     elif mode == "realsel":
         pop = args.extra
-        global_vars.NUM_SNPS = 512
-        global_vars.L = 100000
+        global_vars.NUM_SNPS = 32
+        global_vars.L = 25000
+        MAX_HAPS = 5008
         def gen():
-            it = get_iterator(pop, 0, None, use_bed=False) #"SEL/chr1.bed")
+            it = get_iterator(pop, 0, None) # use_bed=False) #"SEL/chr1.bed")
             for chrom in range(1, 2):
                 bound = it._chrom_bounds(chrom)
                 tqdm.write(f"Pop {pop} | Chrom {chrom:<2d} | {bound}")
-                for i in range(0, 500000000, 100000):
+                for i in range(0, 500_000_000, 25000):
                     pos = it.find(i, chrom)
                     if pos > bound[1]:
                         break
 
                     region = it.real_region(neg1=False, region_len=True, start_idx=pos, return_pos=True)
                     if region is None:
-                        break
+                        continue
                     
                     region, s, e, c = region
                     sample = tokenizer(region)
@@ -450,11 +444,11 @@ if __name__ == "__main__":
         global_vars.NUM_SNPS = 256
         samples_list = []
         it = get_iterator_ghist(
-            "IMP/KHV_infmasked_ref.h5",
+            "IMP/KHV.chr20.64_ref.h5",
             None
         )
         it2 = get_iterator_ghist(
-            "IMP/KHV_infmasked_tgt.h5",
+            "IMP/KHV.chr20.64_tgt.h5",
             None
         )
         n = it2.num_samples
@@ -471,7 +465,7 @@ if __name__ == "__main__":
             if cur_idx == 0:
                 if snp_tgt != 0:
                     # save if not first
-                    region = shuffle(region, n)
+                    # region = shuffle(region, n)
                     dist_vec = [0] + [(positions[j+1] - positions[j])/global_vars.L
                         for j in range(len(positions)-1)]
 
@@ -525,4 +519,4 @@ if __name__ == "__main__":
         features = make_features(include_snp_pos=True)
         # Save tokenized data
         dataset = Dataset.from_list(samples_list, features=features)
-        dataset.save_to_disk(f"IMP/infmasked_{global_vars.NUM_SNPS}")
+        dataset.save_to_disk(f"IMP/KHV.chr20.64.{global_vars.NUM_SNPS}")

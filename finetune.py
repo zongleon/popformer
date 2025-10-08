@@ -10,7 +10,7 @@ parser = argparse.ArgumentParser(description="finetune")
 parser.add_argument("--mode", type=str, default="sel2", help="Mode: realsim/sel/sel2/pop")
 parser.add_argument("--dataset_path", type=str, default="", help="Path to tokenized dataset")
 parser.add_argument("--num_epochs", type=int, default=5, help="Number of training epochs")
-parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training and evaluation")
+parser.add_argument("--batch_size", type=int, default=4, help="Batch size for training and evaluation")
 parser.add_argument("--output_path", type=str, default="", help="Output path for model checkpoints")
 parser.add_argument("--learning_rate", type=float, default=1e-4, help="Learning rate")
 parser.add_argument("--from_init", action="store_true", help="Whether to train from scratch")
@@ -53,32 +53,24 @@ if MODE == "pop":
     dataset = dataset.map(process_pop, keep_in_memory=True)
 
 # Split dataset
+dataset = dataset["train"].train_test_split(0.1, shuffle=True)
 train_dataset = dataset["train"]
-eval_dataset = dataset["test"].take(1024)
+eval_dataset = dataset["test"]
+
+# train_dataset = dataset["train"]
+# eval_dataset = dataset["test"].take(512)
 
 if args.from_init:
-    model = HapbertaForSequenceClassification(RobertaConfig(
-        vocab_size=6,
-        hidden_size=768,
-        num_hidden_layers=12,
-        num_attention_heads=12,
-        intermediate_size=3072,
-        max_position_embeddings=512,
-        position_embedding_type="haplo",
-        axial=True,
-        bos_token_id=2,
-        eos_token_id=3,
-        pad_token_id=5,
-        num_labels=num_labels,
-        classifier_dropout=0
-    ))
+    model = HapbertaForSequenceClassification.from_pretrained("./models/lp_sel_bin_pan2",
+                                                              torch_dtype=torch.bfloat16)
 else:
-    model = HapbertaForSequenceClassification.from_pretrained("./models/pt",
+    model = HapbertaForSequenceClassification.from_pretrained("./models/pt2",
                                                                 classifier_dropout=0,
                                                                 num_labels=num_labels,
+                                                                torch_dtype=torch.bfloat16
     )
 
-collator = HaploSimpleDataCollator(subsample=32, label_dtype=typ)
+collator = HaploSimpleDataCollator(subsample=(32, 64), label_dtype=typ)
 
 # training arguments
 training_args = TrainingArguments(
@@ -92,10 +84,10 @@ training_args = TrainingArguments(
     logging_dir="./logs",
     logging_steps=100,
     save_steps=500,
-    eval_steps=500,
+    eval_steps=100,
     eval_strategy="steps",
     save_strategy="steps",
-    save_total_limit=2,
+    save_total_limit=4,
     load_best_model_at_end=True,
     metric_for_best_model="eval_loss",
     greater_is_better=False,

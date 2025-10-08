@@ -9,7 +9,7 @@ import argparse
 parser = argparse.ArgumentParser(description="Train HapbertaForMaskedLM model")
 parser.add_argument("--dataset_path", type=str, default="", help="Path to tokenized dataset")
 parser.add_argument("--mlm_probability", type=float, default=0.15, help="MLM probability")
-parser.add_argument("--span_mask_probability", type=float, default=0.15, help="Span mask probability")
+parser.add_argument("--span_mask_probability", type=float, default=0, help="Span mask probability")
 parser.add_argument("--num_epochs", type=int, default=5, help="Number of training epochs")
 parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training and evaluation")
 parser.add_argument("--output_path", type=str, default="./models/pt", help="Output path for model checkpoints")
@@ -21,17 +21,19 @@ args = parser.parse_args()
 dataset = load_from_disk(args.dataset_path)
 
 # Split dataset
-dataset = dataset.train_test_split(test_size=0.1)
+dataset = dataset.train_test_split(test_size=0.05)
 train_dataset = dataset["train"]
 eval_dataset = dataset["test"]
 
 # model configuration
 config = RobertaConfig(
     vocab_size=6,
-    hidden_size=768,
-    num_hidden_layers=12,
-    num_attention_heads=12,
-    intermediate_size=3072,
+    # hidden_size=768,
+    hidden_size=512,
+    num_hidden_layers=4,
+    num_attention_heads=4,
+    # intermediate_size=3072,
+    intermediate_size=1024,
     max_position_embeddings=512,
     position_embedding_type="haplo",
     axial=True,
@@ -44,7 +46,7 @@ config = RobertaConfig(
 model = HapbertaForMaskedLM(config)
 
 # data collator
-data_collator = HaploSimpleDataCollator(subsample=(30, 200),
+data_collator = HaploSimpleDataCollator(subsample=(32, 128),
                                         mlm_probability=args.mlm_probability,
                                         span_mask_probability=args.span_mask_probability)
 

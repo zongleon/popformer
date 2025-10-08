@@ -11,6 +11,9 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 from scipy.stats import pearsonr
 from cyvcf2 import VCF
+from scipy.spatial.distance import cdist
+import subprocess
+import time
 
 def test_masked_lm(model_path, dataset):
     print("=" * 30)
@@ -80,7 +83,7 @@ def test_masked_lm(model_path, dataset):
     # ax2.imshow(color(gt_img[0]), aspect='auto', cmap='Greys', interpolation="none")
     # ax2.set_title("ground truth")
 
-    plt.savefig(f"figs/imp_{model_path.split("/")[-1]}_{dataset.split("/")[-1]}.png", dpi=300, bbox_inches="tight")
+    plt.savefig(f"figs/imp_{model_path.split('/')[-1]}_{dataset.split('/')[-1]}.png", dpi=300, bbox_inches="tight")
 
 
 def test(model, dataset, save_preds_path=None):
@@ -125,8 +128,82 @@ def test(model, dataset, save_preds_path=None):
 
     # Concatenate all logits, move to CPU, convert to numpy
     preds = torch.cat(preds, dim=0).numpy()
-    print(f"Predictions shape: {preds.shape}")
 
+    np.save(save_preds_path, preds)
+
+
+def test_baseline(dataset, save_preds_path):
+    ds = load_from_disk(dataset)
+    collator = HaploSimpleDataCollator(subsample=None)
+
+    loader = DataLoader(
+        ds,
+        batch_size=8,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=False,
+        collate_fn=collator,
+    )
+    preds = []
+
+    for batch in tqdm(loader):
+        input_ids = batch["input_ids"].numpy()  # (batch, haps, snps)
+        batch_preds = np.zeros((input_ids.shape[0], input_ids.shape[1], input_ids.shape[2], 7))
+
+        for i in range(input_ids.shape[0]):
+            for hap in range(input_ids.shape[1]):
+                for snp in range(input_ids.shape[2]):
+                    if input_ids[i, hap, snp] == 4:
+                        cnts = np.bincount(input_ids[i, :, snp][input_ids[i, :, snp] != 4])
+                        if cnts.shape[0] == 0:
+                            predicted = 0
+                        else:
+                            predicted = cnts.argmax()
+                        batch_preds[i, hap, snp, predicted] = 1  # One-hot for predicted token
+
+        preds.append(torch.tensor(batch_preds))
+
+    preds = torch.cat(preds, dim=0).numpy()
+    np.save(save_preds_path, preds)
+
+
+def test_baseline2(dataset, save_preds_path):
+    ds = load_from_disk(dataset)
+    collator = HaploSimpleDataCollator(subsample=None)
+
+    loader = DataLoader(
+        ds,
+        batch_size=8,
+        shuffle=False,
+        num_workers=4,
+        pin_memory=False,
+        collate_fn=collator,
+    )
+    preds = []
+
+    for batch in tqdm(loader):
+        input_ids = batch["input_ids"].numpy()  # (batch, haps, snps)
+        batch_preds = np.zeros((input_ids.shape[0], input_ids.shape[1], input_ids.shape[2], 7))
+
+        for i in range(input_ids.shape[0]):
+            dists = cdist(input_ids[i, :, :], input_ids[i, :, :], metric="hamming")
+            for hap in range(input_ids.shape[1]):
+                for snp in range(input_ids.shape[2]):
+                    if input_ids[i, hap, snp] == 4:
+                        most_similar = dists[hap].argsort()
+                        idx = 0
+                        predicted = 4
+                        while predicted == 4:
+                            if idx == input_ids.shape[1]:
+                                predicted = 0
+                                break
+                            predicted = input_ids[i, most_similar[idx], snp]
+                            idx += 1
+                        batch_preds[i, hap, snp, predicted] = 1  # One-hot for predicted token
+
+        preds.append(torch.tensor(batch_preds))
+
+    preds = torch.cat(preds, dim=0).numpy()
     np.save(save_preds_path, preds)
 
 
@@ -157,7 +234,6 @@ def compute_metrics(preds_path, dataset, labels_path):
     pred_labels = pred_labels.transpose(1, 0, 2, 3)  # shape: (haps, batch, snps, 6)
     pred_labels = pred_labels.reshape(pred_labels.shape[0], -1, pred_labels.shape[-1])  # shape: (haps, batch*snps, 6)
     pred_labels = pred_labels[-len(labels["genotypes"].iloc[0]):, mask]
-    print(pred_labels.shape)
 
     # print out first 10 preds and corresponding labels
     for i in range(10):
@@ -195,13 +271,30 @@ def compute_metrics(preds_path, dataset, labels_path):
     # Compute error rate (fraction of mismatches)
     error_rate = (true_genotypes != pred_genotypes).mean()
 
-    print(f"r: {r:.4f}")
-    print(f"r^2: {r2:.4f}")
-    print(f"Error rate: {error_rate:.4f}")
+    # Binned by MAF
+    bins = [0, 0.05, 0.1, 0.2, 0.5, 1.0]
+    bin_labels = ["<0.05", "0.05-0.1", "0.1-0.2", "0.2-0.5", ">=0.5"]
+    binned_results = []
+    for i in range(len(bins) - 1):
+        bin_mask = (labels["MAF"] >= bins[i]) & (labels["MAF"] < bins[i + 1])
+        if bin_mask.sum() == 0:
+            continue
+        true_bin = true_genotypes[:, bin_mask]
+        pred_bin = pred_genotypes[:, bin_mask]
+        true_flat_bin = true_bin.flatten()
+        pred_flat_bin = pred_bin.flatten()
+        if len(true_flat_bin) == 0:
+            continue
+        r_bin, _ = pearsonr(true_flat_bin, pred_flat_bin)
+        r2_bin = r_bin ** 2
+        error_rate_bin = (true_bin != pred_bin).mean()
+        binned_results.append((bin_labels[i], r_bin, r2_bin, error_rate_bin))
+
+    return r, r2, error_rate, binned_results
 
 
-def test_impute():
-    vcf = VCF("IMP/impute5.out.vcf.gz")
+def test_impute(labels_path):
+    vcf = VCF("IMP/preds_impute5.vcf.gz")
     imputeds = []
     for record in vcf:
         try:
@@ -210,23 +303,21 @@ def test_impute():
         except KeyError:
             continue
 
-        chrom = record.CHROM
-        pos = record.POS
         gts = record.genotypes
         gts = "".join([str(gt[0]) + str(gt[1]) for gt in gts])
         imputeds.append(gts)
 
-    labels = pd.read_csv("IMP/masked_snps.csv")
+    labels = pd.read_csv(labels_path)
     true = labels["genotypes"].apply(lambda x: [int(c) for c in x]).tolist()
     true = np.array(true).T
     imps = pd.Series(imputeds).apply(lambda x: [int(c) for c in x]).tolist()
     imps = np.array(imps).T
 
-    print(true.shape, imps.shape)
-        
     true_flat = true.flatten()
     imps_flat = imps.flatten()
 
+    print(true, imps)
+            
     # np.savetxt("true_pred_flat.txt", np.vstack([true_flat, pred_flat]).T, fmt="%d", header="true\tpred")
 
     r, _ = pearsonr(true_flat, imps_flat)
@@ -235,14 +326,94 @@ def test_impute():
     # Compute error rate (fraction of mismatches)
     error_rate = (true_flat != imps_flat).mean()
 
-    print(f"r: {r:.4f}")
-    print(f"r^2: {r2:.4f}")
-    print(f"Error rate: {error_rate:.4f}")
+    # Binned by MAF
+    bins = [0, 0.05, 0.1, 0.2, 0.5, 1.0]
+    bin_labels = ["<0.05", "0.05-0.1", "0.1-0.2", "0.2-0.5", ">=0.5"]
+    binned_results = []
+    for i in range(len(bins) - 1):
+        bin_mask = (labels["MAF"] >= bins[i]) & (labels["MAF"] < bins[i + 1])
+        if bin_mask.sum() == 0:
+            continue
+        true_bin = true[:, bin_mask]
+        imps_bin = imps[:, bin_mask]
+        true_flat_bin = true_bin.flatten()
+        imps_flat_bin = imps_bin.flatten()
+        if len(true_flat_bin) == 0:
+            continue
+        r_bin, _ = pearsonr(true_flat_bin, imps_flat_bin)
+        r2_bin = r_bin ** 2
+        error_rate_bin = (true_flat_bin != imps_flat_bin).mean()
+        binned_results.append((bin_labels[i], r_bin, r2_bin, error_rate_bin))
+
+    return r, r2, error_rate, binned_results
+
 
 if __name__ == "__main__":
     model = sys.argv[1]
-    n_snps = sys.argv[2]
-    test_masked_lm(model, f"IMP/infmasked_{n_snps}")
-    test(model, f"IMP/infmasked_{n_snps}", f"IMP/preds_pt4_{n_snps}.npy")
-    compute_metrics(f"IMP/preds_pt5_{n_snps}.npy", f"IMP/infmasked_{n_snps}", "IMP/masked_snps.csv")
-    # test_impute()
+    dataset = "IMP/KHV.chr20.64.256"
+    labels_path = "IMP/KHV.chr20.64_snps.csv"
+    model_preds_path = "IMP/preds_pt_64_256.npy"
+    baseline1_preds_path = "IMP/preds_baseline1_64_256.npy"
+    baseline2_preds_path = "IMP/preds_baseline2_64_256.npy"
+
+    test_masked_lm(model, dataset)
+
+    start = time.time()
+    test(model, dataset, model_preds_path)
+    model_time = time.time() - start
+
+    start = time.time()
+    test_baseline(dataset, baseline1_preds_path)
+    baseline1_time = time.time() - start
+
+    start = time.time()
+    test_baseline2(dataset, baseline2_preds_path)
+    baseline2_time = time.time() - start
+
+    start = time.time()
+    subprocess.run(["bcftools", "index", "-f", "IMP/KHV.chr20.64_ref.vcf.gz"], check=True)
+    subprocess.run(["bcftools", "index", "-f", "IMP/KHV.chr20.64_tgt.vcf.gz"], check=True)
+    subprocess.run(["./IMP/impute5/impute5_v1.2.0_static", 
+                    "--h", "IMP/KHV.chr20.64_ref.vcf.gz", 
+                    "--g", "IMP/KHV.chr20.64_tgt.vcf.gz", 
+                    "--r", "20:30000-63000000", 
+                    "--buffer-region", "20:0-63500000", 
+                    "--o", "IMP/preds_impute5.vcf.gz"], check=True)
+    impute_time = time.time() - start
+
+    impute_r, impute_r2, impute_err, impute_binned = test_impute(labels_path)
+
+    model_r, model_r2, model_err, model_binned = compute_metrics(model_preds_path, dataset, labels_path)
+    baseline1_r, baseline1_r2, baseline1_err, baseline1_binned = compute_metrics(baseline1_preds_path, dataset, labels_path)
+    baseline2_r, baseline2_r2, baseline2_err, baseline2_binned = compute_metrics(baseline2_preds_path, dataset, labels_path)
+
+    # Print a nice table
+    table = [
+        ["popformer", f"{model_r:.4f}", f"{model_r2:.4f}", f"{model_err:.4f}", f"{model_time:.2f}s"],
+        ["impute5", f"{impute_r:.4f}", f"{impute_r2:.4f}", f"{impute_err:.4f}", f"{impute_time:.2f}s"],
+        ["column freq baseline", f"{baseline1_r:.4f}", f"{baseline1_r2:.4f}", f"{baseline1_err:.4f}", f"{baseline1_time:.2f}s"],
+        ["nearest neighbor baseline", f"{baseline2_r:.4f}", f"{baseline2_r2:.4f}", f"{baseline2_err:.4f}", f"{baseline2_time:.2f}s"],
+    ]
+
+    print("{:<30} {:>8} {:>8} {:>10} {:>6}".format("Method", "r", "r^2", "Error rate", "Runtime"))
+    print("-" * 70)
+    for row in table:
+        print("{:<30} {:>8} {:>8} {:>10} {:>6}".format(*row))
+
+    # Print binned tables
+    # methods = ["popformer", "impute5", "column freq baseline", "nearest neighbor baseline"]
+    # binned_all = [model_binned, impute_binned, baseline1_binned, baseline2_binned]
+    # bin_labels = ["<0.05", "0.05-0.1", "0.1-0.2", "0.2-0.5", ">=0.5"]
+    # for i, bin_label in enumerate(bin_labels):
+    #     print(f"\nBin: {bin_label}")
+    #     table_bin = []
+    #     for method, binned in zip(methods, binned_all):
+    #         if i < len(binned) and binned[i][0] == bin_label:
+    #             _, r, r2, err = binned[i]
+    #             table_bin.append([method, f"{r:.4f}", f"{r2:.4f}", f"{err:.4f}"])
+    #         else:
+    #             table_bin.append([method, "N/A", "N/A", "N/A"])
+    #     print("{:<30} {:>8} {:>8} {:>10}".format("Method", "r", "r^2", "Error rate"))
+    #     print("-" * 60)
+    #     for row in table_bin:
+    #         print("{:<30} {:>8} {:>8} {:>10}".format(*row))

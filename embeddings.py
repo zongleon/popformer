@@ -1,34 +1,41 @@
+from cyvcf2 import VCF
+import pandas as pd
 import numpy as np
 from tqdm import tqdm
 import torch
 from models import HapbertaForMaskedLM
-from datasets import load_from_disk, DatasetDict
+from datasets import load_from_disk
 from collators import HaploSimpleDataCollator
 from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 import umap
 
-dsd = {}
-pops = ["CEU", "CHB", "YRI", "ESN", "CHS", "GBR"]
-for pop in pops:
-    ds = load_from_disk(f"SEL/tokenized_{pop}")
-    dsd[pop] = ds.take(64)
-dsd = DatasetDict(dsd)
+SEED = 42
+use_continent = False
+ext = "sup" if use_continent else "pop"
+cmap = "tab10" if use_continent else "tab20"
+
+vcf = VCF("/bigdata/smathieson/1000g-share/VCF/ALL.chr1.snps.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.vcf.gz")
+df = pd.read_csv("dataset4/1000g_samples.tsv", sep="\t")
+
+pops = [df[df["Sample name"] == s]["Population code"].values[0] for s in vcf.samples]
+
+pop_to_continent = {pop: df[df["Population code"] == pop]["Superpopulation code"].values[0] for pop in df["Population code"].unique()}
+
+# Apply continent mapping if option is enabled
+if use_continent:
+    pops = [pop_to_continent.get(p, p) for p in pops]
+
+# double every pop (haplotype)
+pops = [[p, p] for p in pops]
+pops = np.array(pops).flatten()
+
+ds = load_from_disk("SEL/tokenized_ALL.chr1.snps")
 
 collator = HaploSimpleDataCollator(subsample=None)
 
-# plot first 2 PCs
-colors = {'CEU': 'tab:blue', 'CHB': 'tab:orange', 'YRI': 'tab:green', 
-          'ESN': 'tab:purple', 'CHS': 'tab:red', 'GBR': 'tab:brown'}
-# pop_colors = [colors[label] for label in pops]
-# pop_colors = np.array(pop_colors).repeat(32, axis=0)
-
-# model = HapbertaForMaskedLM.from_pretrained(
-#     "./models/hapberta2d/",
-#     torch_dtype=torch.bfloat16
-# )
 model = HapbertaForMaskedLM.from_pretrained(
-    "./models/pt4/",
+    "./models/pt2/",
     torch_dtype=torch.float16
 )
 model.to("cuda")
@@ -36,80 +43,144 @@ model.eval()
 # model.compile()
 
 def preds():
-    batch_size = 4
-    lbls = []
-    all_embeds = []
-    with torch.inference_mode():
-        for pop in pops:
-            embeds = []
-            ds = dsd[pop]
-            for i in tqdm(range(0, len(ds), batch_size)):
-                batch_samples = [ds[j] for j in range(i, min(i + batch_size, len(ds)))]
-                batch = collator(batch_samples)
-                # Move tensors to device
-                for k in batch:
-                    if isinstance(batch[k], torch.Tensor):
-                        batch[k] = batch[k].to("cuda")
-                
-                output = model(batch["input_ids"], batch["distances"], batch["attention_mask"],
-                            labels=None,
-                            return_hidden_states=True)
-                
-                hidden = output["hidden_states"].mean(axis=2)  # (batch_size, n_haps, n_snps, hidden_size)
-                n_haps = hidden.shape[1]
-                embeds.append(hidden.permute(1, 0, 2).reshape(n_haps, -1).cpu().numpy())  # (n_haps, batch_size * hidden_size)
-                # hidden = output["hidden_states"].mean(axis=(0, 2)).cpu().numpy()
-                # n_haps = hidden.shape[0]
-                # embeds.append(hidden)
+    batch_size = 64
+    all_embeds = np.zeros((len(vcf.samples), len(ds)), dtype=np.float16)
+    # all_embeds = np.zeros((len(vcf.samples), len(ds), model.config.hidden_size), dtype=np.float16)
+    # all_embeds = np.zeros((len(vcf.samples), len(ds), 34))
 
-            embeds = np.concatenate(embeds, axis=1)
-            all_embeds.append(embeds)
-            lbls.extend([pop] * n_haps)
+    with torch.inference_mode():
+        for i in range(0, len(ds), batch_size):
+            ni = min(i + batch_size, len(ds))
+            batch_samples = [ds[j] for j in range(i, ni)]
+            batch = collator(batch_samples)
+
+            # Move tensors to device
+            for k in batch:
+                if isinstance(batch[k], torch.Tensor):
+                    batch[k] = batch[k].to("cuda")
+
+            for hap in tqdm(range(0, len(vcf.samples) * 2, 2)):
+            
+                output = model(batch["input_ids"][:, hap:hap+2, :], 
+                               batch["distances"], 
+                               batch["attention_mask"], 
+                               labels=None, 
+                               return_hidden_states=True)
+
+                # mean over haps, snps, hidden dim
+                hidden = output["hidden_states"].mean(axis=(1, 2, 3))
+                all_embeds[hap // 2, i:ni] = hidden.cpu().numpy()
+
+                # mean over haps, snps
+                # hidden = output["hidden_states"].mean(axis=(1, 2))
+                # all_embeds[hap // 2, i:ni, :] = hidden.cpu().numpy()
+
+                # mean over haps, hidden dim
+                # hidden = output["hidden_states"].mean(axis=(1, 3))
+                # all_embeds[hap // 2, i:ni, :] = hidden.cpu().numpy()
+
+                # mean over haps, hidden dim
+                # hidden = output["hidden_states"].mean(axis=(1, 3))
+                # hidden = hidden.flatten()
+                # start = i * 258
+                # end = ni * 258
+                # all_embeds[hap // 2, start:end] = hidden.detach().cpu().numpy().ravel()
+
+    # all_embeds = all_embeds.mean(axis=1)
+    # all_embeds = all_embeds.reshape(all_embeds.shape[0], -1)
+    # all_embeds = all_embeds.reshape(-1, all_embeds.shape[-1])
     
-    return np.concatenate(all_embeds, axis=0), lbls
+    np.save("embeds.npy", all_embeds)
+    print(all_embeds.shape)
+    return all_embeds
     
 # pca on embeds
-def pca(embeds, pop_colors):
-    embed_pca = PCA(n_components=10)
+def pca(embeds, lbls, figpath):
+    embed_pca = PCA(random_state=SEED, n_components=16)
     embed_pca.fit(embeds)
 
     reduced_embeds = embed_pca.transform(embeds)
 
     # plot explained variance
-    # var = embed_pca.explained_variance_ratio_
-    # plt.figure(figsize=(10, 5))
-    # plt.bar(range(len(var)), var)
-    # plt.xlabel("Principal Component")
-    # plt.ylabel("Variance Explained")
-    # plt.title("PCA - Explained Variance")
-    # plt.show()
+    var = embed_pca.explained_variance_ratio_
+    plt.figure(figsize=(10, 5))
+    plt.bar(range(len(var)), var)
+    plt.xlabel("pc #")
+    plt.ylabel("variance")
+    plt.savefig("figs/pca_ev.png", dpi=300, bbox_inches="tight")
 
-    plt.figure(figsize=(10, 10))
-    plt.scatter(reduced_embeds[:, 0], reduced_embeds[:, 1], c=pop_colors)
-    # Add legend
-    handles = [plt.Line2D([0], [0], marker='o', color='w', label=p, markerfacecolor=color, markersize=10)
-            for p, color in colors.items()]
-    plt.legend(handles=handles, title="Population")
+    unique_pops = sorted(set(lbls), key=lambda p: pop_to_continent.get(p, p))
+    unique_pops.remove("IBS,MSL")
+
+    markers = ["o", "s", "^", "+", "x", "v"]
+
+    colors = {}
+    continents = sorted(set([pop_to_continent.get(p, p) for p in unique_pops]))
+    for continent in continents:
+        pops_in_cont = [p for p in unique_pops if pop_to_continent[p] == continent]
+        cmap_cont = plt.get_cmap('tab10')
+        for i, pop in enumerate(pops_in_cont):
+            colors[pop] = cmap_cont(i)
+
+    plt.figure(figsize=(10, 10), layout="constrained")
+    for i, pop in enumerate(unique_pops):
+        pop_embeds = reduced_embeds[np.array(lbls) == pop]
+
+        marker = "o"
+        color = None
+        if not use_continent:
+            marker = markers[continents.index(pop_to_continent[pop])]
+            color = colors[pop]
+
+        plt.scatter(pop_embeds[:, 0], pop_embeds[:, 1], marker=marker, color=color, label=pop)
+
     plt.xlabel("PC1")
     plt.ylabel("PC2")
     plt.title("pca")
-    plt.savefig("figs/embeds_pca.png", dpi=300)
+    plt.legend(title="POP", bbox_to_anchor=(1.03, 1))
 
-def um(embeds, pop_colors):
+    plt.savefig(figpath, dpi=300)
+
+def um(embeds, lbls, figpath):
     # umap on embeds
-    reducer = umap.UMAP()
-    embedding = reducer.fit_transform(embeds)
+    # Reduce dimensionality with PCA first
+    pca_reducer = PCA(random_state=SEED, n_components=16)
+    embeds_pca = pca_reducer.fit_transform(embeds)
 
-    plt.figure(figsize=(10, 10))
-    plt.scatter(embedding[:, 0], embedding[:, 1], c=pop_colors)
-    # Add legend
-    handles = [plt.Line2D([0], [0], marker='o', color='w', label=pop, markerfacecolor=color, markersize=10)
-            for pop, color in colors.items()]
-    plt.legend(handles=handles, title="Population")
+    reducer = umap.UMAP(random_state=SEED, min_dist=0.5)
+    embedding = reducer.fit_transform(embeds_pca)
+
+    unique_pops = sorted(set(lbls), key=lambda p: pop_to_continent.get(p, p))
+    unique_pops.remove("IBS,MSL")
+    markers = ["o", "s", "^", "+", "x", "v"]
+
+    colors = {}
+    continents = sorted(set([pop_to_continent.get(p, p) for p in unique_pops]))
+    for continent in continents:
+        pops_in_cont = [p for p in unique_pops if pop_to_continent[p] == continent]
+        cmap_cont = plt.get_cmap('tab10')
+        for i, pop in enumerate(pops_in_cont):
+            colors[pop] = cmap_cont(i)
+
+    plt.figure(figsize=(10, 10), layout="constrained")
+    for i, pop in enumerate(unique_pops):
+        pop_embeds = embedding[np.array(lbls) == pop]
+        
+        marker = "o"
+        color = None
+        if not use_continent:
+            marker = markers[continents.index(pop_to_continent[pop])]
+            color = colors[pop]
+
+        plt.scatter(pop_embeds[:, 0], pop_embeds[:, 1], label=pop, color=color, marker=marker)
+
     plt.xlabel("umap 1")
     plt.ylabel("umap 2")
     plt.title("umap")
-    plt.savefig("figs/embeds_umap.png", dpi=300)
+
+    plt.legend(title="POP", bbox_to_anchor=(1.03, 1), loc='upper left')
+
+    plt.savefig(figpath, dpi=300)
 
 def attns(model):
     inputs = collator([ds[0]])
@@ -150,23 +221,20 @@ def attns(model):
     plt.tight_layout()
     plt.savefig("figs/snp_attn.png", dpi=300)
 
-    # Plot col attention maps for each head in layer idx
-    snp_pos = 4
-    num_heads = col_attn.shape[0]
-    fig, axes = plt.subplots(3, 4, figsize=(20, 15))
-    axes = axes.flatten()
 
-    for i in range(num_heads):
-        ax = axes[i]
-        im = ax.imshow(col_attn[i, snp_pos, 0], aspect='auto', cmap='viridis')
-        ax.set_title(f'Head {i}')
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+# embeds = preds()
 
-    plt.tight_layout()
-    plt.savefig("figs/hap_attn_snp_4.png", dpi=300)
+embeds = np.load("embeds.npy")
+
+if use_continent:
+    # map labels to continent
+    lbls = [pop_to_continent.get(p, p) for p in pops[::2]]
+    # lbls = np.repeat(lbls, len(ds))
+else:
+    lbls = pops[::2]
 
 
-embeds, lbls = preds()
-pop_colors = [colors[label] for label in lbls]
-pca(embeds, pop_colors)
-um(embeds, pop_colors)
+lbls = np.array(lbls)
+
+pca(embeds, lbls, f"figs/embed_pca2_{ext}_128.png")
+um(embeds, lbls, f"figs/embed_umap2_{ext}_128.png")

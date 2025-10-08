@@ -22,7 +22,7 @@ def sweep(dataset, model, save_preds_path=None):
     model.to(device)
     model.eval()
 
-    collator = HaploSimpleDataCollator(subsample=32)
+    collator = HaploSimpleDataCollator(subsample=(32, 32))
 
     loader = DataLoader(
         data,
@@ -81,7 +81,7 @@ def plot(out_fig_path, agg="mean"):
             start_pos = data["start_pos"]
             end_pos = data["end_pos"]
             # Smooth predictions
-            window = 5
+            window = 15
             if window > 0:
                 smooth_preds = np.zeros_like(preds)
                 for j in range(len(preds)):
@@ -191,22 +191,68 @@ def plot_manhattan(preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YR
     plt.savefig(out_fig_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
 
+def plot_chr2_lct(preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YRI"), window=15):
+    """Plot predictions for chromosome 2, focusing on the LCT region (136545420..136594754)."""
+    colors = plt.colormaps.get('tab10')
+    
+    # One subplot per population
+    n_rows = len(populations)
+    fig, axs = plt.subplots(n_rows, 1, figsize=(12, 4 * n_rows), sharex=True)
+    if n_rows == 1:
+        axs = [axs]
+    
+    region_start = 136545420
+    region_end = 136594754
+    
+    for i, (ax, pop) in enumerate(zip(axs, populations)):
+        data = np.load(preds_path_stub.format(pop=pop))
+        logits = torch.tensor(data["preds"])
+        probs = torch.softmax(logits, dim=-1)[:, 1].numpy()
+        if isinstance(window, int) and window > 1:
+            kernel = np.ones(window, dtype=float) / window
+            probs = np.convolve(probs, kernel, mode="same")
+        chrom = data["chrom"]
+        starts = data["start_pos"]
+        
+        # Filter for chromosome 2 and the region
+        mask = (chrom == 2) # & (starts >= region_start) & (ends <= region_end)
+        if np.any(mask):
+            x = starts[mask]
+            y = probs[mask]
+            ax.scatter(x, y, s=5, color=colors(i), alpha=0.7, linewidths=0, rasterized=True)
+        
+            ax.axvspan(region_start, region_end, color="purple", alpha=0.4,
+                        label=("LCT"))
+        
+        ax.set_ylim(0, 1)
+        ax.set_ylabel("p(selection)")
+        ax.set_title(f"{pop} - chr2")
+        ax.grid(True, axis="y", alpha=0.3, linestyle="--")
+        ax.ticklabel_format(style='plain', axis='x', scilimits=(0,0))
+    
+    axs[0].legend(loc="upper right")
+    axs[-1].set_xlabel("Position (bp)")
+    plt.tight_layout()
+    plt.savefig(out_fig_path, dpi=300, bbox_inches='tight')
+    plt.close(fig)
 
 if __name__ == "__main__":
     model = sys.argv[1]
     assert model in ["ft", "lp"], "Use ft for fine-tuned, lp for linear probe"
     if model == "ft":
-        path = "models/ft_sel_bin_fix/checkpoint-500"
-        preds = "SEL/ft2bin_preds_{pop}.npz"
-        output = "SEL/ft2bin_"
+        path = "models/ft_sel_bin_pan2/"
+        preds = "SEL/ftbinpan2_preds_{pop}.npz"
+        output = "SEL/ftbinpan2_"
     else:
-        path = "models/lp_sel_bin/checkpoint-700"
-        preds = "SEL/lp2bin_preds_{pop}.npz"
-        output = "SEL/lp2bin_"
+        path = "models/lp_sel_bin_pan2/"
+        preds = "SEL/lpbinpan2_preds_{pop}.npz"
+        output = "SEL/lpbinpan2_"
 
-    pops = ["CEU", "CHB", "YRI"]
+    pops = ["CEU"]
+    # pops = ["CEU", "CHB", "YRI"]
     # for pop in pops:
     #     sweep(f"SEL/tokenized_{pop}", path, preds.format(pop=pop))
-    
+
     # plot(".png", agg="mean")
-    plot_manhattan(preds, output + "manhattan.png", populations=pops, window=13)
+    plot_manhattan(preds, output + "manhattan.png", populations=pops, window=15)
+    # plot_chr2_lct(preds, output + "lct.png")

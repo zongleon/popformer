@@ -1,8 +1,8 @@
-import os
 import sys
 import pandas as pd
 import numpy as np
 from cyvcf2 import VCF, Writer
+import allel
 
 rng = np.random.default_rng()
 
@@ -22,7 +22,7 @@ def infinium_mask(chr):
     print(f"Saved infinium mask with {df.shape[0]} kept positions.")
 
 
-def random_mask(input_vcf, chr, mask_ratio):
+def random_mask(input_vcf, mask_ratio):
     # slow but whatever
     n = len([v for v in VCF(input_vcf)])
 
@@ -63,12 +63,23 @@ def apply_mask(input_vcf, mask_path, output_ref_vcf, ref_ratio, strategy="remove
     vcf_all = VCF(input_vcf)
     all_samples = list(vcf_all.samples)
     n_samples = len(all_samples)
-    ref_set = list(rng.choice(n_samples, int(ref_ratio * n_samples), replace=False))
+    if ref_ratio < 1:
+        ref_set = list(rng.choice(n_samples, int(ref_ratio * n_samples), replace=False))
+    elif type(ref_ratio) is int:
+        ref_set = list(rng.choice(n_samples, ref_ratio, replace=False))
+    else:
+        raise ValueError("ref_ratio should be a float (ratio) or an int (number of ref samples)")
+         
     ref_set = [all_samples[x] for x in ref_set]
-
     target_samples = [s for s in all_samples if s not in ref_set]
+
+    if type(ref_ratio) is int:
+        target_samples = target_samples[:ref_ratio]
     # print(target_samples)
     # print(all_samples)
+
+    print(len(list(ref_set)))
+    print(len(target_samples))
 
     # Prepare per-group VCF readers with sample subsetting
     vcf_ref = VCF(input_vcf)
@@ -120,15 +131,25 @@ def apply_mask(input_vcf, mask_path, output_ref_vcf, ref_ratio, strategy="remove
     # Write masked SNPs to CSV
     if masked_snps:
         masked_df = pd.DataFrame(masked_snps)
-        masked_df.to_csv("IMP/masked_snps.csv", index=False)
-        print(f"Saved masked SNPs data to IMP/masked_snps.csv with {len(masked_snps)} entries.")
+        masked_df.to_csv(f"{output_base}_snps.csv", index=False)
+        print(f"Saved masked SNPs ({len(masked_snps)})")
 
     print(f"Masked sites MAF: mean={np.nanmean(masked_mafs):.4f}, std={np.nanstd(masked_mafs):.4f}, n={len(masked_mafs)}")
+    return output_base + "_ref.vcf.gz", output_base + "_tgt.vcf.gz"
 
+def convert_vcf(vcf_filename):
+    """Convert vcf_filename"""
+    # here we save only CHROM, GT (genotypes) and POS (SNP positions)
+    # see: https://scikit-allel.readthedocs.io/en/stable/io.html
+    allel.vcf_to_hdf5(vcf_filename, vcf_filename.replace(".vcf.gz", ".h5"), 
+                      fields=['CHROM','GT','POS'],
+                      overwrite=True)
 
 if __name__ == "__main__":
     input_vcf = sys.argv[1]
     mask_path = sys.argv[2]
     output_vcf = sys.argv[3]
 
-    apply_mask(input_vcf, mask_path, output_vcf, ref_ratio=0.6, strategy="remove")
+    ref_vcf, tgt_vcf = apply_mask(input_vcf, mask_path, output_vcf, ref_ratio=32, strategy="remove")
+    convert_vcf(ref_vcf)
+    convert_vcf(tgt_vcf)

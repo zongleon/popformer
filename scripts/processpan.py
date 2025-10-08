@@ -137,5 +137,5 @@ def stats(path):
 
 if __name__ == "__main__":
     # take input dir and output dir as args
-    # main(sys.argv[1], sys.argv[2])
+    main(sys.argv[1], sys.argv[2])
     stats(sys.argv[2])

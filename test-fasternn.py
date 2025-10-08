@@ -24,7 +24,7 @@ def test(dataset, model, save_preds_path=None):
     model.to(device)
     model.eval()
 
-    collator = HaploSimpleDataCollator(subsample=32)
+    collator = HaploSimpleDataCollator(subsample=(32, 32))
 
     loader = DataLoader(
         data,
@@ -82,8 +82,8 @@ def acc(preds_path):
         best_idx = max(range(len(accuracies)), key=accuracies.__getitem__)
 
         dataset_acc = accuracy_score(dataset_labels, dataset_preds > thresholds[best_idx])
-        print(f"Accuracy, {dataset_name}: {dataset_acc:.4f}")
-        # print(f"AUC-ROC,  {dataset_name}: {dataset_auc:.4f}")
+        print(f"Accuracy @ thr={thresholds[best_idx]:.3f}, {dataset_name}: {dataset_acc:.4f}")
+        print(f"AUC-ROC,  {dataset_name}: {dataset_auc:.4f}")
 
 
     plt.savefig("figs/fasternn_rocs.png", dpi=300, bbox_inches="tight")
@@ -92,14 +92,14 @@ if __name__ == "__main__":
     model = sys.argv[1]
     assert model in ["ft", "lp"], "Use ft for fine-tuned, lp for linear probe"
     if model == "ft":
-        path = "models/ft_sel_bin_fix/checkpoint-500"
-        preds = "FASTER_NN/ftbin_preds2.npy"
-        output = "FASTER_NN/ftbin_"
+        path = "models/ft_sel_bin_pan/checkpoint-500"
+        preds = "FASTER_NN/ftbinpan_preds.npy"
+        output = "FASTER_NN/ftbinpan_"
     else:
-        path = "models/lp_sel_bin/checkpoint-700"
-        preds = "FASTER_NN/lpbin_preds2.npy"
-        output = "FASTER_NN/lpbin_"
+        path = "models/lp_sel_bin_pan2/"
+        preds = "FASTER_NN/lpbinpan_preds.npy"
+        output = "FASTER_NN/lpbinpan_"
 
-    # test("FASTER_NN/tokenized_majmin512", path, preds)
+    test("FASTER_NN/tokenized_majmin512", path, preds)
     acc(preds)
     

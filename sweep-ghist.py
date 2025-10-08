@@ -6,6 +6,7 @@ from collators import HaploSimpleDataCollator
 from datasets import load_from_disk
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+from scipy.signal import find_peaks
 
 def sweep(t: str, model: str, name: str):
     data = load_from_disk(f"GHIST/samples_{t}")
@@ -21,9 +22,9 @@ def sweep(t: str, model: str, name: str):
     model.eval()
     # model.compile()
 
-    collator = HaploSimpleDataCollator(subsample=32, pad_batch=True)
+    collator = HaploSimpleDataCollator(subsample=(50, 50), pad_batch=True)
 
-    batch_size = 32
+    batch_size = 16
     preds = []
 
     with torch.no_grad():
@@ -59,96 +60,6 @@ def sweep_snpdensity(t: str):
     preds = np.array(preds)
     np.savez(f"GHIST/snpdens_{t}.npz", preds=preds, start_pos=data["start_pos"], end_pos=data["end_pos"])
 
-
-def plot(t: str, name: str):
-    data = np.load(f"GHIST/{name}_{t}.npz")
-    if "snpdens" in name:
-        preds = data["preds"]
-        ylbl = "num SNPs in window"
-    elif "reg" in name:
-        preds = data["preds"] / 100
-        ylbl = "pred. selection coeff."
-    else:
-        preds = torch.softmax(torch.tensor(data["preds"]), dim=-1)[:, 1].numpy()
-        # preds = data["preds"][:, 1]
-        ylbl = "pred. probability of selection"
-    # print(preds.shape)
-    start_pos = data["start_pos"]
-    end_pos = data["end_pos"]
-    
-    p = np.zeros((end_pos[-1] - start_pos[0]))
-    counts = np.zeros_like(p)
-    for i in range(len(preds)):
-        s = start_pos[i] - start_pos[0]
-        e = end_pos[i] - start_pos[0]
-        # print(s, e, preds[i])
-        p[s:e] += preds[i]
-        counts[s:e] += 1
-    # Avoid division by zero
-    counts[counts == 0] = 1
-    p /= counts
-    pos = np.arange(start_pos[0], end_pos[-1])
-
-    # Create figure with nice size
-    plt.figure(figsize=(12, 6))
-    
-    # Plot predictions vs positions
-    plt.plot(pos, p, linewidth=0.8, alpha=0.8)
-    
-    # Styling
-    plt.xlabel('Position (bp)')
-    plt.ylabel(ylbl)
-    
-    # Add grid for better readability
-    plt.grid(True, alpha=0.3, linestyle='--')
-    
-    # Format x-axis to show positions in a readable format
-    plt.ticklabel_format(style='plain', axis='x', scilimits=(0,0))
-    
-    # Adjust layout to prevent label cutoff
-    plt.tight_layout()
-    
-    # Save the plot
-    plt.savefig(f'GHIST/{name}_{t}_line.png', dpi=300, bbox_inches='tight')
-
-
-def plot2(t: str, name: str):
-    data = np.load(f"GHIST/{name}_{t}.npz")
-    if "reg" in name:
-        preds = data["preds"] / 100
-        ylbl = "pred. selection coeff."
-    else:
-        preds = torch.softmax(torch.tensor(data["preds"]), dim=-1)[:, 1].numpy()
-        # preds = data["preds"][:, 1]
-        ylbl = "pred. probability of selection"
-    # print(preds.shape)
-    start_pos = data["start_pos"][:preds.shape[0]]
-    end_pos = data["end_pos"]
-    
-    print(start_pos.shape, preds.shape)
-    # Create figure with nice size
-    plt.figure(figsize=(12, 6))
-    
-    # Plot predictions vs positions
-    plt.scatter(start_pos, preds, linewidth=0.8, alpha=0.8)
-    
-    # Styling
-    plt.xlabel('Position (bp)')
-    plt.ylabel(ylbl)
-    
-    # Add grid for better readability
-    plt.grid(True, alpha=0.3, linestyle='--')
-    
-    # Format x-axis to show positions in a readable format
-    plt.ticklabel_format(style='plain', axis='x', scilimits=(0,0))
-    
-    # Adjust layout to prevent label cutoff
-    plt.tight_layout()
-    
-    # Save the plot
-    plt.savefig(f'GHIST/{name}_{t}_rawscatter.png', dpi=300, bbox_inches='tight')
-
-
 def plot_smooth(t: str, name: str):
     data = np.load(f"GHIST/{name}_{t}.npz")
     if "snpdens" in name:
@@ -159,12 +70,13 @@ def plot_smooth(t: str, name: str):
         ylbl = "pred. selection coeff."
     else:
         preds = torch.softmax(torch.tensor(data["preds"]), dim=-1)[:, 1].numpy()
+        preds = np.log(preds)
         ylbl = "pred. probability of selection"
     start_pos = data["start_pos"]
     end_pos = data["end_pos"]
 
-    # Smooth predictions by averaging over surrounding 9 predictions
-    window = 9
+    # Smooth predictions by averaging over surrounding predictions
+    window = 7
     smooth_preds = np.zeros_like(preds)
     for i in range(len(preds)):
         left = max(0, i - window // 2)
@@ -184,7 +96,7 @@ def plot_smooth(t: str, name: str):
 
 def plot_combine(name: str):
     ts = ["singlesweep", "singlesweep.growth_bg", "multisweep", "multisweep.growth_bg"]
-    ts = [t + "_50000" for t in ts]
+    ts = ["rl" + t + "_100000" for t in ts]
 
     fig, axs = plt.subplots(2, 2, figsize=(14, 10), sharex=True, sharey=True)
     for idx, t in enumerate(ts):
@@ -197,11 +109,13 @@ def plot_combine(name: str):
             ylbl = "pred. selection coeff."
         else:
             preds = torch.softmax(torch.tensor(data["preds"]), dim=-1)[:, 1].numpy()
+            preds = np.log(preds)
+            # preds = data["preds"][:, 1]
             ylbl = "pred. probability of selection"
         start_pos = data["start_pos"]
 
-        # Smooth predictions by averaging over surrounding 9 predictions
-        window = 15
+        # Smooth predictions by averaging over surrounding predictions
+        window = 3
         smooth_preds = np.zeros_like(preds)
         for i in range(len(preds)):
             left = max(0, i - window // 2)
@@ -211,8 +125,40 @@ def plot_combine(name: str):
         # Scale predictions to [0, 1]
         # smooth_preds = (smooth_preds - np.min(smooth_preds)) / (np.max(smooth_preds) - np.min(smooth_preds) + 1e-8)
 
+        # peaks
+        peaks, _ = find_peaks(smooth_preds, width=None, distance=12, prominence=None)
+
+        # Subset top 15 peaks by prominence
+        if len(peaks) > 0:
+            top = 1
+            if "multisweep" in t:
+                top = 6
+            if "multisweep.growth_bg" in t:
+                top = 15
+            prominences = smooth_preds[peaks]
+            top_indices = np.argsort(prominences)[-top:]
+            top_peaks = peaks[top_indices]
+            # Sort top_peaks by position for plotting
+            top_peaks = np.sort(top_peaks)
+
+            # Print out a BED file for the top peaks
+            bed_lines = []
+            for peak_idx in top_peaks:
+                pos = start_pos[peak_idx]
+                # BED format: chrom, start, end, name, score
+                bed_lines.append(f"21\t{pos-300000}\t{pos+300000}")
+
+            bed_file = f"GHIST/submit/{name}_{t}_3.bed"
+            with open(bed_file, "w") as f:
+                for line in bed_lines:
+                    f.write(line + "\n")
+        else:
+            top_peaks = np.array([])
+
+        # Plot only top 15 peaks
         ax = axs[idx // 2, idx % 2]
         ax.plot(start_pos, smooth_preds, linewidth=0.8, alpha=0.8)
+        ax.plot(start_pos[top_peaks], smooth_preds[top_peaks], "x")
         ax.set_title(t.rstrip("_50000"))
         ax.set_xlabel('Position (bp)')
         ax.set_ylabel(ylbl)
@@ -232,9 +178,11 @@ if __name__ == "__main__":
         model = sys.argv[3]
 
     if model is not None:
-        sweep(t, model, name)
+        if model != "nopred":
+            sweep(t, model, name)
     else:
         plot_combine(name)
+        raise SystemExit
     # sweep_snpdensity(t)
     # plot(t, name)
     # plot2(t, name)
