@@ -1,5 +1,5 @@
 import torch
-from models import HapbertaForSequenceClassification
+from models import HapbertaForColumnClassification, HapbertaForSequenceClassification
 from transformers import RobertaConfig, TrainingArguments, Trainer
 from datasets import load_from_disk
 from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, mean_squared_error, r2_score, confusion_matrix
@@ -21,6 +21,7 @@ MODE = args.mode
 dataset_path = args.dataset_path
 output_path = args.output_path
 
+model = HapbertaForSequenceClassification
 if MODE == "realsim":
     num_labels = 2
     typ = torch.long
@@ -33,6 +34,10 @@ elif MODE == "sel2":
 elif MODE == "pop":
     num_labels = 3
     typ = torch.long
+elif MODE == "ancientx":
+    num_labels = 1
+    typ = torch.float16
+    model = HapbertaForColumnClassification
 else:
     raise ValueError("Incorrect mode selected")
 
@@ -53,7 +58,12 @@ if MODE == "pop":
     dataset = dataset.map(process_pop, keep_in_memory=True)
 
 # Split dataset
-dataset = dataset["train"].train_test_split(0.1, shuffle=True)
+# dataset = dataset.shuffle(42)
+# train_dataset = dataset.filter(lambda ex: ex["chrom"] != 21 and ex["chrom"] != 22)
+# eval_dataset = dataset.filter(lambda ex: ex["chrom"] == 21)
+
+dataset = dataset.filter(lambda ex: ex["chrom"] % 2 != 0)
+dataset = dataset.train_test_split(0.1, shuffle=True)
 train_dataset = dataset["train"]
 eval_dataset = dataset["test"]
 
@@ -61,10 +71,10 @@ eval_dataset = dataset["test"]
 # eval_dataset = dataset["test"].take(512)
 
 if args.from_init:
-    model = HapbertaForSequenceClassification.from_pretrained("./models/lp_sel_bin_pan2",
+    model = model.from_pretrained("./models/lp_sel_bin_pan2",
                                                               torch_dtype=torch.bfloat16)
 else:
-    model = HapbertaForSequenceClassification.from_pretrained("./models/pt2",
+    model = model.from_pretrained("./models/pt2",
                                                                 classifier_dropout=0,
                                                                 num_labels=num_labels,
                                                                 torch_dtype=torch.bfloat16
@@ -84,7 +94,7 @@ training_args = TrainingArguments(
     logging_dir="./logs",
     logging_steps=100,
     save_steps=500,
-    eval_steps=100,
+    eval_steps=500,
     eval_strategy="steps",
     save_strategy="steps",
     save_total_limit=4,
@@ -99,7 +109,7 @@ training_args = TrainingArguments(
 
 def compute_metrics(eval_pred):
     logits, labels = eval_pred
-    if MODE != "sel":
+    if MODE != "sel" and MODE != "ancientx":
         preds = logits.argmax(axis=-1)
         if MODE == "pop":
             acc = accuracy_score(labels, preds)
@@ -112,6 +122,10 @@ def compute_metrics(eval_pred):
             f1 = f1_score(labels, preds)
             return {"accuracy": acc, "f1": f1}
     else:
+        logits, labels = logits.reshape(-1), labels.reshape(-1)
+        mask = labels != -100
+        logits = logits[mask]
+        labels = labels[mask]
         mse = mean_squared_error(labels, logits)
         mae = mean_absolute_error(labels, logits)
         return {"mse": mse, "mae": mae}

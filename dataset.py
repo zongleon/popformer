@@ -166,6 +166,7 @@ def make_features(
         features["chrom"] = Value("int8")
     if include_snp_pos:
         features["positions"] = List(Value(dtype="int32"))
+        features["chrom"] = Value("int8")
 
     if label_dtype is not None:
         if label_resolution == "window":
@@ -406,6 +407,7 @@ if __name__ == "__main__":
         # Save tokenized data
         dataset = Dataset.from_generator(gen, features=features)
         dataset.save_to_disk(f"SEL/tokenized_{pop}")
+    
     elif mode == "fasternn":
         global_vars.NUM_SNPS = 512
         def gen():
@@ -520,3 +522,47 @@ if __name__ == "__main__":
         # Save tokenized data
         dataset = Dataset.from_list(samples_list, features=features)
         dataset.save_to_disk(f"IMP/KHV.chr20.64.{global_vars.NUM_SNPS}")
+
+    elif mode == "ancientsel":
+        global_vars.NUM_SNPS = 512
+        global_vars.L = 50000
+        def gen():
+            it = get_iterator("CHB", 0, None)
+            df = pd.read_csv("ANC/Selection_Summary_Statistics_01OCT2025.tsv", comment="#", sep="\t")
+            df = df.set_index(["CHROM", "POS"])
+            for chrom in range(1, 23):
+                bound = it._chrom_bounds(chrom)
+                chrom_df = df.xs(chrom, level='CHROM')
+                chrom_df = chrom_df[~chrom_df.index.duplicated()]
+                tqdm.write(f"Pop {pop} | Chrom {chrom:<2d} | {bound}")
+                for i in range(0, 500_000_000, 50000):
+                    pos = it.find(i, chrom)
+                    if pos > bound[1]:
+                        break
+
+                    region = it.real_region(neg1=False, region_len=True, start_idx=pos, return_all_pos=True)
+                    if region is None:
+                        continue
+                    
+                    region, positions, _ = region
+                    
+                    # xs = chrom_df["S"].reindex(positions).abs().values
+                    # if np.isnan(xs):
+                        # continue
+                    # tqdm.write(f"{xs}")
+                    
+                    xs = chrom_df["S"].reindex(positions).abs().fillna(-100)
+
+                    sample = tokenizer(region)
+                    yield {
+                        "input_ids": sample[..., 0], 
+                        "distances": sample[0, :, 1],
+                        "chrom": chrom,
+                        "positions": positions,
+                        "label": xs
+                    }
+
+        features = make_features(label_dtype="float16", label_resolution="snp", include_snp_pos=True)
+        # Save tokenized data
+        dataset = Dataset.from_generator(gen, features=features)
+        dataset.save_to_disk("ANC/tokenized_CHB")

@@ -90,9 +90,6 @@ class HapbertaForSequenceClassification(RobertaForSequenceClassification):
         self.classifier = HapbertaClassificationHead(config)
         self.post_init()
 
-        # for param in self.roberta.parameters():
-        #     param.requires_grad = False
-
     def forward(self, input_ids=None, distances=None, attention_mask=None, labels=None, 
                 return_hidden_states=False, **kwargs):
         # Pass distances through to the model
@@ -129,6 +126,77 @@ class HapbertaForSequenceClassification(RobertaForSequenceClassification):
             "logits": logits,
             # "hidden_states": outputs.hidden_states if hasattr(outputs, 'hidden_states') else None,
             # "attentions": outputs.attentions if hasattr(outputs, 'attentions') else None,
+        }
+
+
+class HapbertaColumnClassificationHead(nn.Module):
+    """Head for SNP-level classification tasks."""
+
+    def __init__(self, config):
+        super().__init__()
+        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+        classifier_dropout = (
+            config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
+        )
+        self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.dropout = nn.Dropout(classifier_dropout)
+        self.out_proj = nn.Linear(config.hidden_size, config.num_labels)
+
+    def forward(self, features, **kwargs):
+        # Pool only over haplotypes, keep SNP dimension
+        x = features.mean(dim=1)  # (batch_size, n_snps, hidden_size)
+        x = self.layer_norm(x)
+        x = self.dropout(x)
+        x = self.dense(x)
+        x = torch.tanh(x)
+        x = self.dropout(x)
+        x = self.out_proj(x)  # (batch_size, n_snps, num_labels)
+        return x
+
+
+class HapbertaForColumnClassification(RobertaForSequenceClassification):
+    """"""
+    def __init__(self, config):
+        super().__init__(config)
+        if getattr(config, "axial", False):
+            self.roberta = HapbertaAxialModel(config, add_pooling_layer=False)
+
+        # Use the column-specific head
+        self.classifier = HapbertaColumnClassificationHead(config)
+        self.post_init()
+
+    def forward(self, input_ids=None, distances=None, attention_mask=None, labels=None, 
+                return_hidden_states=False, **kwargs):
+        # Pass distances through to the model
+        outputs = self.roberta(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            distances=distances,
+        )
+
+        output = outputs[0]  # (batch_size, n_haps, n_snps, hidden_size)
+        logits = self.classifier(output)  # (batch_size, n_snps, num_labels)
+
+        loss = None
+        if labels is not None:
+            if self.config.num_labels == 1:
+                loss_fct = torch.nn.MSELoss(reduction='none')
+                loss = loss_fct(logits.view(-1), labels.view(-1))
+                mask = labels.view(-1) != -100
+                loss = loss[mask].mean() if mask.any() else torch.tensor(0.0, device=logits.device)
+            else:
+                loss_fct = torch.nn.CrossEntropyLoss()
+                loss = loss_fct(logits.view(-1, self.config.num_labels), labels.view(-1))
+
+        if return_hidden_states:
+            return {
+                "loss": loss,
+                "logits": logits,
+                "hidden_states": output,
+            }
+        return {
+            "loss": loss,
+            "logits": logits,
         }
 
 

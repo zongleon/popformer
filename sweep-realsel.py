@@ -120,7 +120,6 @@ def plot_manhattan(preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YR
     d0 = np.load(preds_path_stub.format(pop=first_pop))
     chrom0 = d0["chrom"]
     end0 = d0["end_pos"]
-    np.savetxt("ends.txt", end0, fmt="%d")    
     chroms = sorted(np.unique(chrom0))
 
     # Chromosome lengths and cumulative offsets
@@ -140,7 +139,7 @@ def plot_manhattan(preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YR
 
     # One subplot per population
     n_rows = len(populations)
-    fig, axs = plt.subplots(n_rows, 1, figsize=(20, 3 * n_rows), sharex=True)
+    fig, axs = plt.subplots(n_rows, 1, figsize=(20, 3 * n_rows), sharex=True, layout="constrained")
     if n_rows == 1:
         axs = [axs]
 
@@ -150,7 +149,8 @@ def plot_manhattan(preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YR
     for i, (ax, pop) in enumerate(zip(axs, populations)):
         data = np.load(preds_path_stub.format(pop=pop))
         logits = torch.tensor(data["preds"])  # [N, 2]
-        probs = torch.softmax(logits, dim=-1)[:, 1].numpy()
+        # probs = torch.softmax(logits, dim=-1)[:, 1].numpy()
+        probs = logits.numpy()
         if isinstance(window, int) and window > 1:
             kernel = np.ones(window, dtype=float) / window
             probs = np.convolve(probs, kernel, mode="same")
@@ -166,29 +166,28 @@ def plot_manhattan(preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YR
             ax.scatter(x, y, s=5, color=colors((c - 1) % 2 + i * 2), alpha=0.7, linewidths=0, rasterized=True)
 
         # Overlay known selected regions for this population
-        added_label = False
-        sub = sel_df[sel_df["Population"] == pop]
-        for _, r in sub.iterrows():
-            c_raw = int(r["Chromosome"].replace("chr", ""))
-            x0 = offsets[c_raw] + float(r["Start"])
-            x1 = offsets[c_raw] + float(r["End"])
-            ax.axvspan(x0, x1, color="purple", # colors(i * 2), 
-                       alpha=0.4,
-                       label=("Selection region" if not added_label else None))
-            added_label=True
+        # added_label = False
+        # sub = sel_df[sel_df["Population"] == pop]
+        # for _, r in sub.iterrows():
+        #     c_raw = int(r["Chromosome"].replace("chr", ""))
+        #     x0 = offsets[c_raw] + float(r["Start"])
+        #     x1 = offsets[c_raw] + float(r["End"])
+        #     ax.axvspan(x0, x1, color="purple", # colors(i * 2), 
+        #                alpha=0.4,
+        #                label=("Selection region" if not added_label else None))
+        #     added_label=True
 
-        ax.set_ylim(0, 1)
+        # ax.set_ylim(0, 1)
         ax.set_ylabel("p(selection)")
         ax.set_title(f"{pop}")
         ax.grid(True, axis="y", alpha=0.3, linestyle="--")
 
-    axs[0].legend(loc="upper right")
+    # axs[0].legend(loc="upper right" )
     axs[-1].set_xticks(xticks)
     axs[-1].set_xticklabels(xticklabels)
     axs[-1].set_xlabel("Chromosome")
 
-    plt.tight_layout()
-    plt.savefig(out_fig_path, dpi=300, bbox_inches='tight')
+    plt.savefig(out_fig_path, dpi=300)
     plt.close(fig)
 
 def plot_chr2_lct(preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YRI"), window=15):
@@ -238,21 +237,24 @@ def plot_chr2_lct(preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YRI
 
 if __name__ == "__main__":
     model = sys.argv[1]
-    assert model in ["ft", "lp"], "Use ft for fine-tuned, lp for linear probe"
     if model == "ft":
         path = "models/ft_sel_bin_pan2/"
         preds = "SEL/ftbinpan2_preds_{pop}.npz"
         output = "SEL/ftbinpan2_"
-    else:
+    elif model == "lp":
         path = "models/lp_sel_bin_pan2/"
         preds = "SEL/lpbinpan2_preds_{pop}.npz"
         output = "SEL/lpbinpan2_"
+    elif model == "anc":
+        path = "models/lp_ancient_x/checkpoint-4600"
+        preds = "ANC/preds_{pop}.npz"
+        output = "ANC/"
 
     pops = ["CEU"]
     # pops = ["CEU", "CHB", "YRI"]
-    # for pop in pops:
-    #     sweep(f"SEL/tokenized_{pop}", path, preds.format(pop=pop))
+    for pop in pops:
+        sweep(f"SEL/tokenized_{pop}", path, preds.format(pop=pop))
 
     # plot(".png", agg="mean")
-    plot_manhattan(preds, output + "manhattan.png", populations=pops, window=15)
+    plot_manhattan(preds, output + "manhattan.png", populations=pops, window=1)
     # plot_chr2_lct(preds, output + "lct.png")

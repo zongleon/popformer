@@ -254,7 +254,7 @@ class RealDataRandomIterator:
 
         return i # exclusive
 
-    def real_region(self, neg1, region_len, start_idx=None, return_pos=False):
+    def real_region(self, neg1, region_len, start_idx=None, return_pos=False, return_all_pos=False):
         # inclusive
         recursive = False
         if start_idx is None:
@@ -306,7 +306,9 @@ class RealDataRandomIterator:
 
             after = util.process_gt_dist(hap_data, dist_vec,
                 region_len=region_len, real=True, neg1=neg1)
-            if return_pos:
+            if return_all_pos:
+                return after, positions, chrom
+            elif return_pos:
                 return after, start_base, end_base, chrom
             return after #, [chrom, start_base, end_base]
 

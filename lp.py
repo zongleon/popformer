@@ -1,6 +1,6 @@
 import torch
 from transformers import Trainer, TrainingArguments
-from models import HapbertaForSequenceClassification
+from models import HapbertaForColumnClassification, HapbertaForSequenceClassification
 from datasets import load_from_disk
 from collators import HaploSimpleDataCollator
 import argparse
@@ -15,18 +15,26 @@ parser.add_argument("--batch_size", type=int, default=8, help="Batch size for tr
 parser.add_argument("--learning_rate", type=float, default=1e-4, help="Learning rate for classifier head")
 args = parser.parse_args()
 
+model = HapbertaForSequenceClassification
 if args.mode == "sel":
     num_labels = 1 # continuous
-    typ = torch.float32
+    typ = torch.float16
 elif args.mode == "sel2":
     num_labels = 2
     typ = torch.long
+elif args.mode == "ancientx":
+    num_labels = 1
+    typ = torch.float16
+    model = HapbertaForColumnClassification
 
 # Load dataset
 dataset = load_from_disk(args.dataset_path)
-# dataset = dataset.shuffle()
+dataset = dataset.filter(lambda ex: ex["chrom"] % 2 != 0)
+# dataset = dataset.shuffle(42)
+# train_dataset = dataset.filter(lambda ex: ex["chrom"] != 21 and ex["chrom"] != 22)
+# eval_dataset = dataset.filter(lambda ex: ex["chrom"] == 21)
 
-dataset = dataset["train"].train_test_split(0.01, shuffle=True)
+dataset = dataset.train_test_split(0.1, shuffle=True)
 train_dataset = dataset["train"]
 eval_dataset = dataset["test"]
 # train_dataset = dataset["train"]
@@ -34,7 +42,7 @@ eval_dataset = dataset["test"]
 
 
 # Load pretrained model
-model = HapbertaForSequenceClassification.from_pretrained(
+model = model.from_pretrained(
     "./models/pt2",
     num_labels=num_labels,
     classifier_dropout=0
@@ -57,11 +65,11 @@ training_args = TrainingArguments(
     weight_decay=0.01,
     logging_dir="./logs",
     logging_steps=100,
-    save_steps=100,
-    eval_steps=100,
+    save_steps=500,
+    eval_steps=500,
     eval_strategy="steps",
     save_strategy="steps",
-    save_total_limit=2,
+    save_total_limit=4,
     load_best_model_at_end=True,
     metric_for_best_model="eval_loss",
     greater_is_better=False,
@@ -73,12 +81,16 @@ training_args = TrainingArguments(
 
 def compute_metrics(eval_pred):
     logits, labels = eval_pred
-    if args.mode != "sel":
+    if args.mode != "sel" and args.mode != "ancientx":
         preds = logits.argmax(axis=-1)
         acc = accuracy_score(labels, preds)
         f1 = f1_score(labels, preds)
         return {"accuracy": acc, "f1": f1}
     else:
+        logits, labels = logits.reshape(-1), labels.reshape(-1)
+        mask = labels != -100
+        logits = logits[mask]
+        labels = labels[mask]
         mse = mean_squared_error(labels, logits)
         mae = mean_absolute_error(labels, logits)
         return {"mse": mse, "mae": mae}

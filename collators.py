@@ -124,6 +124,9 @@ class HaploSimpleDataCollator:
             distances = ex["distances"]
             if self.label_dtype is not None:
                 labels = ex["label"]
+                if isinstance(labels, list):
+                    labels = labels[:max_len] + [-100] * (max_len - len(labels))
+                    labels = labels[:514]
                 batch_labels.append(labels)
 
             input_ids = torch.tensor(input_ids, dtype=torch.long)
