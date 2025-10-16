@@ -1,19 +1,43 @@
 import torch
 from models import HapbertaForColumnClassification, HapbertaForSequenceClassification
-from transformers import RobertaConfig, TrainingArguments, Trainer
+from transformers import TrainingArguments, Trainer
 from datasets import load_from_disk
-from sklearn.metrics import accuracy_score, f1_score, mean_absolute_error, mean_squared_error, r2_score, confusion_matrix
+from sklearn.metrics import (
+    accuracy_score,
+    f1_score,
+    mean_absolute_error,
+    mean_squared_error,
+    r2_score,
+    confusion_matrix,
+)
 from collators import HaploSimpleDataCollator
 import argparse
 
 parser = argparse.ArgumentParser(description="finetune")
-parser.add_argument("--mode", type=str, default="sel2", help="Mode: realsim/sel/sel2/pop")
-parser.add_argument("--dataset_path", type=str, default="", help="Path to tokenized dataset")
-parser.add_argument("--num_epochs", type=int, default=5, help="Number of training epochs")
-parser.add_argument("--batch_size", type=int, default=4, help="Batch size for training and evaluation")
-parser.add_argument("--output_path", type=str, default="", help="Output path for model checkpoints")
+parser.add_argument(
+    "--mode", type=str, default="selbin", help="Mode: realsim/selbin/selreg/ancientx"
+)
+parser.add_argument(
+    "--dataset_path", type=str, default="", help="Path to tokenized dataset"
+)
+parser.add_argument(
+    "--num_epochs", type=int, default=5, help="Number of training epochs"
+)
+parser.add_argument(
+    "--batch_size", type=int, default=4, help="Batch size for training and evaluation"
+)
+parser.add_argument(
+    "--output_path", type=str, default="", help="Output path for model checkpoints"
+)
 parser.add_argument("--learning_rate", type=float, default=1e-4, help="Learning rate")
-parser.add_argument("--from_init", action="store_true", help="Whether to train from scratch")
+parser.add_argument(
+    "--from_init", action="store_true", help="Whether to train from scratch"
+)
+parser.add_argument(
+    "--lp",
+    action="store_true",
+    help="Freeze transformer blocks, only train linear head.",
+)
 
 args = parser.parse_args()
 
@@ -25,10 +49,10 @@ model = HapbertaForSequenceClassification
 if MODE == "realsim":
     num_labels = 2
     typ = torch.long
-elif MODE == "sel":
-    num_labels = 1 # continuous
-    typ = torch.float32
-elif MODE == "sel2":
+elif MODE == "selreg":
+    num_labels = 1  # continuous
+    typ = torch.float16
+elif MODE == "selbin":
     num_labels = 2
     typ = torch.long
 elif MODE == "pop":
@@ -39,7 +63,7 @@ elif MODE == "ancientx":
     typ = torch.float16
     model = HapbertaForColumnClassification
 else:
-    raise ValueError("Incorrect mode selected")
+    raise ValueError("Unknown mode selected")
 
 dataset = load_from_disk(dataset_path).shuffle(42)
 
@@ -51,6 +75,7 @@ if MODE == "pop":
         "CHB": 1,
         "YRI": 2,
     }
+
     def process_pop(example):
         example["label"] = lbl2id[example["pop"]]
         return example
@@ -58,27 +83,36 @@ if MODE == "pop":
     dataset = dataset.map(process_pop, keep_in_memory=True)
 
 # Split dataset
-# dataset = dataset.shuffle(42)
 # train_dataset = dataset.filter(lambda ex: ex["chrom"] != 21 and ex["chrom"] != 22)
 # eval_dataset = dataset.filter(lambda ex: ex["chrom"] == 21)
 
-dataset = dataset.filter(lambda ex: ex["chrom"] % 2 != 0)
-dataset = dataset.train_test_split(0.1, shuffle=True)
+# dataset = dataset.filter(lambda ex: ex["chrom"] % 2 != 0)
+# dataset = dataset.train_test_split(0.1, shuffle=True)
+# train_dataset = dataset["train"]
+# eval_dataset = dataset["test"]
+
+test_dataset = dataset["test"].take(512)
+dataset = dataset["train"].train_test_split(0.1, shuffle=True)
 train_dataset = dataset["train"]
 eval_dataset = dataset["test"]
-
-# train_dataset = dataset["train"]
-# eval_dataset = dataset["test"].take(512)
+# eval_dataset = test_dataset
 
 if args.from_init:
-    model = model.from_pretrained("./models/lp_sel_bin_pan2",
-                                                              torch_dtype=torch.bfloat16)
+    model = model.from_pretrained("./models/lp_selbin3", torch_dtype=torch.bfloat16)
 else:
-    model = model.from_pretrained("./models/pt2",
-                                                                classifier_dropout=0,
-                                                                num_labels=num_labels,
-                                                                torch_dtype=torch.bfloat16
+    model = model.from_pretrained(
+        "./models/pt2",
+        classifier_dropout=0,
+        num_labels=num_labels,
+        torch_dtype=torch.bfloat16,
     )
+
+
+if args.lp:
+    # Freeze all layers except classification head
+    for name, param in model.named_parameters():
+        if "classifier" not in name:
+            param.requires_grad = False
 
 collator = HaploSimpleDataCollator(subsample=(32, 64), label_dtype=typ)
 
@@ -89,12 +123,13 @@ training_args = TrainingArguments(
     num_train_epochs=args.num_epochs,
     per_device_train_batch_size=args.batch_size,
     per_device_eval_batch_size=args.batch_size,
+    # gradient_accumulation_steps=4,
     warmup_ratio=0.1,
     weight_decay=0.01,
     logging_dir="./logs",
     logging_steps=100,
-    save_steps=500,
-    eval_steps=500,
+    save_steps=100,
+    eval_steps=100,
     eval_strategy="steps",
     save_strategy="steps",
     save_total_limit=4,
@@ -107,6 +142,7 @@ training_args = TrainingArguments(
     learning_rate=args.learning_rate,
 )
 
+
 def compute_metrics(eval_pred):
     logits, labels = eval_pred
     if MODE != "sel" and MODE != "ancientx":
@@ -115,20 +151,28 @@ def compute_metrics(eval_pred):
             acc = accuracy_score(labels, preds)
             f1 = f1_score(labels, preds, average="micro")
             matr = confusion_matrix(labels, preds)
-            return {"accuracy": acc, "f1": f1, 
-                    "cm_0": matr[0].tolist(), "cm_1": matr[1].tolist(), "cm_2": matr[2].tolist()}
+            return {
+                "accuracy": acc,
+                "f1": f1,
+                "cm_0": matr[0].tolist(),
+                "cm_1": matr[1].tolist(),
+                "cm_2": matr[2].tolist(),
+            }
         else:
             acc = accuracy_score(labels, preds)
             f1 = f1_score(labels, preds)
             return {"accuracy": acc, "f1": f1}
     else:
-        logits, labels = logits.reshape(-1), labels.reshape(-1)
-        mask = labels != -100
-        logits = logits[mask]
-        labels = labels[mask]
+        if MODE == "ancientx":
+            logits, labels = logits.reshape(-1), labels.reshape(-1)
+            mask = labels != -100
+            logits = logits[mask]
+            labels = labels[mask]
         mse = mean_squared_error(labels, logits)
         mae = mean_absolute_error(labels, logits)
-        return {"mse": mse, "mae": mae}
+        r2 = r2_score(labels, logits)
+        return {"mse": mse, "mae": mae, "r2": r2}
+
 
 trainer = Trainer(
     model=model,
@@ -145,3 +189,5 @@ trainer.train()
 # Save model and tokenizer
 trainer.save_model(output_path)
 
+print("Test metrics:")
+print(trainer.evaluate(test_dataset))

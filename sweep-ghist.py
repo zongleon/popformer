@@ -66,11 +66,11 @@ def plot_smooth(t: str, name: str):
         preds = data["preds"]
         ylbl = "num SNPs in window"
     elif "reg" in name:
-        preds = data["preds"] / 100
+        preds = data["preds"]
         ylbl = "pred. selection coeff."
     else:
         preds = torch.softmax(torch.tensor(data["preds"]), dim=-1)[:, 1].numpy()
-        preds = np.log(preds)
+        # preds = np.log(preds)
         ylbl = "pred. probability of selection"
     start_pos = data["start_pos"]
     end_pos = data["end_pos"]
@@ -105,17 +105,17 @@ def plot_combine(name: str):
             preds = data["preds"]
             ylbl = "num SNPs in window"
         elif "reg" in name:
-            preds = data["preds"] / 100
+            preds = data["preds"]
             ylbl = "pred. selection coeff."
         else:
             preds = torch.softmax(torch.tensor(data["preds"]), dim=-1)[:, 1].numpy()
-            preds = np.log(preds)
+            # preds = np.log(preds)
             # preds = data["preds"][:, 1]
             ylbl = "pred. probability of selection"
         start_pos = data["start_pos"]
 
         # Smooth predictions by averaging over surrounding predictions
-        window = 3
+        window = 9
         smooth_preds = np.zeros_like(preds)
         for i in range(len(preds)):
             left = max(0, i - window // 2)
@@ -126,7 +126,7 @@ def plot_combine(name: str):
         # smooth_preds = (smooth_preds - np.min(smooth_preds)) / (np.max(smooth_preds) - np.min(smooth_preds) + 1e-8)
 
         # peaks
-        peaks, _ = find_peaks(smooth_preds, width=None, distance=12, prominence=None)
+        peaks, _ = find_peaks(smooth_preds, width=None, distance=20, prominence=None)
 
         # Subset top 15 peaks by prominence
         if len(peaks) > 0:
@@ -146,7 +146,7 @@ def plot_combine(name: str):
             for peak_idx in top_peaks:
                 pos = start_pos[peak_idx]
                 # BED format: chrom, start, end, name, score
-                bed_lines.append(f"21\t{pos-300000}\t{pos+300000}")
+                bed_lines.append(f"21\t{pos-100000}\t{pos+300000}")
 
             bed_file = f"GHIST/submit/{name}_{t}_3.bed"
             with open(bed_file, "w") as f:

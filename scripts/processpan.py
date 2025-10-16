@@ -11,6 +11,7 @@ from dataset import find_nonzero_block_cols
 from pg_gan import global_vars
 
 MIDDLE_ONLY = False
+MAX = 5000
 
 FILE = "{pop}_{typ}{seed}.trees"
 MAX_HAPS = 256
@@ -26,19 +27,19 @@ def main(dir, out):
     # input metadat
     df = pd.read_csv(metadata)
     df.columns = [col.strip() for col in df.columns.tolist()]
-    n_seeds = df.shape[0]
-    df.insert(7, "seed", [seed for seed in range(n_seeds)])
+    n_seeds = min(MAX, df.shape[0])
+    df = df.iloc[:n_seeds]
     total = n_seeds * 2
     print(f"\nLoaded metadata: {n_seeds} seeds ({total} total)")
     print(f"\tColumns: {df.columns.tolist()}")
 
     # update metadata
-    neutrals = [(seed, -1, 0, 0, 0) for seed in range(n_seeds)]
+    neutrals = [(-1, 0, 0, 0) for _ in range(n_seeds)]
     neutral_df = pd.read_csv(metadata2).iloc[:n_seeds]
-    neutral_df = pd.concat([neutral_df, pd.DataFrame(neutrals, columns=df.columns[-5:])], axis=1)
+    neutral_df = pd.concat([neutral_df, pd.DataFrame(neutrals, columns=df.columns[-4:])], axis=1)
     df = pd.concat([df, neutral_df])
     df["sim"] = "Sept25"
-    df["pop"] = "pan_2"
+    df["pop"] = "pan_3"
     
     # store results
     matrices = np.zeros((total, MAX_HAPS, MAX_SNPS))
@@ -138,4 +139,4 @@ def stats(path):
 if __name__ == "__main__":
     # take input dir and output dir as args
     main(sys.argv[1], sys.argv[2])
-    stats(sys.argv[2])
+    # stats(sys.argv[2])

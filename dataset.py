@@ -298,14 +298,15 @@ if __name__ == "__main__":
         dataset = Dataset.from_generator(gen, features=features)
         dataset.save_to_disk(f"dataset{VERSION}/ft_realsim_tkns")
     elif mode == "runsel":
-        allsamples: np.ndarray = np.load("1000g/combined_pan_2/matrices.npy", mmap_mode="r")
-        alldistances: np.ndarray = np.load("1000g/combined_pan_2/distances.npy", mmap_mode="r")
-        df = pd.read_csv("1000g/combined_pan_2/metadata.csv")
+        allsamples: np.ndarray = np.load("1000g/combined_pan_3/matrices.npy", mmap_mode="r")
+        alldistances: np.ndarray = np.load("1000g/combined_pan_3/distances.npy", mmap_mode="r")
+        df = pd.read_csv("1000g/combined_pan_3/metadata.csv", memory_map=True)
         filt = None
         global_vars.NUM_SNPS = 512
 
         def gen():
-            sel = df["coeff"].to_numpy()            
+            # sel = df["coeff"].to_numpy(dtype=np.float16)
+            sel = df["coeff"].to_numpy()
             sel = (sel > 0).astype(int)
 
             for i, (sample, dist, s) in enumerate(zip(allsamples, alldistances, sel)):
@@ -331,7 +332,7 @@ if __name__ == "__main__":
                     
         features = make_features(label_dtype="int8", label_resolution="window")
         # Save tokenized data
-        filt = df["pop"] == "pan_2"
+        filt = df["pop"] == "pan_3"
         train_dataset = Dataset.from_generator(gen, features=features)
         filt = df["pop"] == "YRI"
         test_dataset = Dataset.from_generator(gen, features=features)
@@ -339,7 +340,7 @@ if __name__ == "__main__":
             "train": train_dataset,
             "test": test_dataset,
         })
-        dataset.save_to_disk(f"dataset{VERSION}/ft_selbin_fixwindow_tkns")
+        dataset.save_to_disk(f"dataset{VERSION}/ft_selbin3_fixwindow_tkns")
     elif mode == "ghist":
         global_vars.L = 100000
         global_vars.NUM_SNPS = 512
@@ -351,7 +352,7 @@ if __name__ == "__main__":
             n_snps = it.num_snps
             bound = it._chrom_bounds(21)
 
-            for i in range(0, 500000000, 100000):
+            for i in range(0, 500000000, 50000):
                 pos = it.find(i, 21)
                 if pos > bound[1]:
                     break
@@ -409,10 +410,10 @@ if __name__ == "__main__":
         dataset.save_to_disk(f"SEL/tokenized_{pop}")
     
     elif mode == "fasternn":
-        global_vars.NUM_SNPS = 512
+        global_vars.NUM_SNPS = 128
         def gen():
-            samples = np.load("FASTER_NN/fasternn_regions_majmin512.npy")
-            distances = np.load("FASTER_NN/fasternn_distances_majmin512.npy")
+            samples = np.load("FASTER_NN/fasternn_regions_majmin.npy")
+            distances = np.load("FASTER_NN/fasternn_distances_majmin.npy")
             for sample, distance in zip(samples, distances):
                 region = np.dstack([
                     sample,
@@ -426,7 +427,7 @@ if __name__ == "__main__":
 
         # Save tokenized data
         dataset = Dataset.from_generator(gen, features=make_features())
-        dataset.save_to_disk("FASTER_NN/tokenized_majmin512")
+        dataset.save_to_disk("FASTER_NN/tokenized_majmin")
     elif mode == "imputation":
 
         def shuffle(arr, n):

@@ -35,8 +35,8 @@ def main(path, out):
             n_haps = lm.shape[2]
 
             # store results
-            matrices = np.zeros((n, MAX_HAPS, MAX_SNPS))
-            distances = np.zeros((n, MAX_SNPS))
+            matrices = np.zeros((n, MAX_HAPS, MAX_SNPS), dtype=np.float16)
+            distances = np.zeros((n, MAX_SNPS), dtype=np.float16)
             
             for idx, (mat, dist) in enumerate(zip(lm, ld)):
                 mat = mat.T
@@ -58,7 +58,7 @@ def main(path, out):
                     distances[idx, :n_snps] = dist[None, :n_snps]
 
             # metadata
-            data = [(0, 0, 0, 0, 0, 0, 0, seed, 
+            data = [(seed, 0, 0, 0, 0, 0, 0, 0, 0, 
                      -1 if "neutral" in t else 25000,
                      sel, 0, 0, "old", pop) for seed in range(n)]
             

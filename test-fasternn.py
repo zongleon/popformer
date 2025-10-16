@@ -1,4 +1,3 @@
-import contextlib
 import sys
 import numpy as np
 import torch
@@ -57,7 +56,7 @@ def test(dataset, model, save_preds_path=None):
 def acc(preds_path):
     preds = np.load(preds_path)
     preds = torch.softmax(torch.tensor(preds), dim=-1)[:, 1].numpy()
-    
+    np.savetxt("tp.out", preds, fmt="%.3f")
     # columns ["dataset", "label"]
     # dataset has items like D1, D2, D3...
     # label has binary classes 0/1
@@ -90,16 +89,12 @@ def acc(preds_path):
 
 if __name__ == "__main__":
     model = sys.argv[1]
-    assert model in ["ft", "lp"], "Use ft for fine-tuned, lp for linear probe"
-    if model == "ft":
-        path = "models/ft_sel_bin_pan/checkpoint-500"
-        preds = "FASTER_NN/ftbinpan_preds.npy"
-        output = "FASTER_NN/ftbinpan_"
-    else:
-        path = "models/lp_sel_bin_pan2/"
-        preds = "FASTER_NN/lpbinpan_preds.npy"
-        output = "FASTER_NN/lpbinpan_"
-
-    test("FASTER_NN/tokenized_majmin512", path, preds)
+    # path = "models/ft_selbin3/checkpoint-1100"
+    path = model
+    preds = "FASTER_NN/preds.npy"
+    # output = "FASTER_NN/ftbinpan2_"
+    # preds = "FASTER_NN/lpbinpan2_preds.npy"
+    
+    test("FASTER_NN/tokenized_majmin", path, preds)
     acc(preds)
     

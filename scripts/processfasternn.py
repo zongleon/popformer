@@ -15,9 +15,8 @@ def load(dataset="1", split="test", neut=False) -> tuple[np.ndarray, np.ndarray]
     path = glob.glob(path)
 
     n_haps = 128
-    n_snps = 512
+    n_snps = 128
     total = 1000
-    # sites = 100000 # probably TODO
     pbar = tqdm(total=total)
 
     samples = np.zeros((total, n_haps, n_snps), dtype=np.int8)
@@ -35,11 +34,16 @@ def load(dataset="1", split="test", neut=False) -> tuple[np.ndarray, np.ndarray]
             if line[:9] == "positions":
                 # store distances
                 dist = np.array([float(s) for s in line[11:-2].split(" ")])
-
-                mid = dist.shape[0] // 2
+                
+                n = dist.shape[0]
+                mid = n // 2
+                # they simulate 100000 positions
+                # lower = max(0, mid - n // 4)
                 lower = max(0, mid - n_snps // 2)
-                upper = min(mid + n_snps // 2, dist.shape[0])
-                # pbar.write(f"{lower}, {upper}")
+                # upper = min(mid + n // 4, n)
+                upper = min(mid + n_snps // 2, n)
+                # pbar.write(f"{n}: [{lower}, {upper}]")
+                # pbar.write(f"{n}")
 
                 distances[smp, :(upper-lower)] = (dist[lower:upper] - dist[lower])
 
@@ -77,10 +81,11 @@ if __name__ == "__main__":
 
     # maj-min
     for i in range(samples.shape[0]):
+
         samples[i] = util.major_minor(samples[i], False)
 
     print(samples.shape, distances.shape)
 
-    np.save("FASTER_NN/fasternn_regions_majmin512.npy", samples)
-    np.save("FASTER_NN/fasternn_distances_majmin512.npy", distances)
+    np.save("FASTER_NN/fasternn_regions_majmin.npy", samples)
+    np.save("FASTER_NN/fasternn_distances_majmin.npy", distances)
     meta.to_csv("FASTER_NN/fasternn_meta.csv", index=False)
