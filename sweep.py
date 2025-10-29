@@ -1,5 +1,5 @@
-import contextlib
-import sys
+import argparse
+import os
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -10,7 +10,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import pandas as pd
 
-def sweep(dataset, model, save_preds_path=None):
+def sweep(dataset, model, save_preds_path=None, save_features_path=None):
     data = load_from_disk(dataset)
 
     model = HapbertaForSequenceClassification.from_pretrained(
@@ -22,18 +22,16 @@ def sweep(dataset, model, save_preds_path=None):
     model.to(device)
     model.eval()
 
-    collator = HaploSimpleDataCollator(subsample=(32, 32))
+    # collator = HaploSimpleDataCollator(subsample=(32, 32))
+    collator = HaploSimpleDataCollator(subsample=None)
 
     loader = DataLoader(
         data,
-        batch_size=16,
-        shuffle=False,
-        num_workers=4,
-        pin_memory=device.type == "cuda",
+        batch_size=1,
         collate_fn=collator,
     )
     preds = []
-
+    features = []
     with torch.inference_mode():
         for batch in tqdm(loader):
             # Move tensors to device
@@ -43,18 +41,45 @@ def sweep(dataset, model, save_preds_path=None):
             
             output = model(batch["input_ids"], 
                             batch["distances"], 
-                            batch["attention_mask"])
+                            batch["attention_mask"],
+                            return_hidden_states=save_features_path is not None
+                            )
             
-            preds.append(output["logits"].detach().cpu())
+            if save_preds_path:
+                preds.append(output["logits"].detach().cpu())
+            if save_features_path:
+                # mean pool them
+                features.append(output["hidden_states"].mean(dim=(1,2)).detach().cpu())
 
+    if "positions" in data.column_names:
+        start_pos = [p[0] for p in data["positions"]]
+        end_pos = [p[-1] for p in data["positions"]]
+        chrom = data["chrom"]
+    elif "start_pos" in data.column_names and "end_pos" in data.column_names:
+        start_pos = data["start_pos"]
+        end_pos = data["end_pos"]
+        chrom = data["chrom"]
+    else:
+        start_pos = np.array([])
+        end_pos = np.array([])
+        chrom = np.array([])
 
-    # Concatenate all logits, move to CPU, convert to numpy, and squeeze
-    all_preds = torch.cat(preds, dim=0).numpy().squeeze()
-    np.savez(save_preds_path, preds=all_preds, start_pos=data["start_pos"], end_pos=data["end_pos"],
-             chrom=data["chrom"])
+    if save_features_path:
+        all_features = torch.cat(features, dim=0).numpy()
+        print(f"Saving features of shape {all_features.shape} to {save_features_path}")
+        np.savez(save_features_path, features=all_features, start_pos=start_pos, end_pos=end_pos,
+                 chrom=chrom)
+
+    if save_preds_path:
+        all_preds = torch.cat(preds, dim=0).numpy().squeeze()
+        print(f"Saving predictions of shape {all_preds.shape} to {save_preds_path}")
+        np.savez(save_preds_path, preds=all_preds, start_pos=start_pos, end_pos=end_pos,
+                 chrom=chrom)
+
 
 def plot(out_fig_path, agg="mean"):
     from matplotlib import colormaps
+
     # Load sel.csv and bed
     bed_df = pd.read_csv("SEL/bed.bed", sep="\t", header=None)
     bed_df.columns = ["Chromosome", "Start", "End"]
@@ -148,8 +173,10 @@ def plot_manhattan(preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YR
 
     for i, (ax, pop) in enumerate(zip(axs, populations)):
         data = np.load(preds_path_stub.format(pop=pop))
-        logits = torch.tensor(data["preds"])  # [N, 2]
-        probs = torch.softmax(logits, dim=-1)[:, 1].numpy()
+        # logits = torch.tensor(data["preds"])  # [N, 2]
+        # probs = torch.softmax(logits, dim=-1)[:, 1].numpy()
+        probs = data["preds"][:, 1]
+        # probs = data["preds"]  # [N,]
         if isinstance(window, int) and window > 1:
             kernel = np.ones(window, dtype=float) / window
             probs = np.convolve(probs, kernel, mode="same")
@@ -176,7 +203,7 @@ def plot_manhattan(preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YR
                        label=("Selection region" if not added_label else None))
             added_label=True
 
-        ax.set_ylim(0, 1)
+        # ax.set_ylim(0, 1)
         ax.set_ylabel("p(selection)")
         ax.set_title(f"{pop}")
         ax.grid(True, axis="y", alpha=0.3, linestyle="--")
@@ -189,75 +216,29 @@ def plot_manhattan(preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YR
     plt.savefig(out_fig_path, dpi=300)
     plt.close(fig)
 
-def plot_chr2_lct(preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YRI"), window=15):
-    """Plot predictions for chromosome 2, focusing on the LCT region (136545420..136594754)."""
-    colors = plt.colormaps.get('tab10')
-    
-    # One subplot per population
-    n_rows = len(populations)
-    fig, axs = plt.subplots(n_rows, 1, figsize=(12, 4 * n_rows), sharex=True)
-    if n_rows == 1:
-        axs = [axs]
-    
-    region_start = 136545420
-    region_end = 136594754
-    
-    for i, (ax, pop) in enumerate(zip(axs, populations)):
-        data = np.load(preds_path_stub.format(pop=pop))
-        logits = torch.tensor(data["preds"])
-        probs = torch.softmax(logits, dim=-1)[:, 1].numpy()
-        if isinstance(window, int) and window > 1:
-            kernel = np.ones(window, dtype=float) / window
-            probs = np.convolve(probs, kernel, mode="same")
-        chrom = data["chrom"]
-        starts = data["start_pos"]
-        
-        # Filter for chromosome 2 and the region
-        mask = (chrom == 2) # & (starts >= region_start) & (ends <= region_end)
-        if np.any(mask):
-            x = starts[mask]
-            y = probs[mask]
-            ax.scatter(x, y, s=5, color=colors(i), alpha=0.7, linewidths=0, rasterized=True)
-        
-            ax.axvspan(region_start, region_end, color="purple", alpha=0.4,
-                        label=("LCT"))
-        
-        ax.set_ylim(0, 1)
-        ax.set_ylabel("p(selection)")
-        ax.set_title(f"{pop} - chr2")
-        ax.grid(True, axis="y", alpha=0.3, linestyle="--")
-        ax.ticklabel_format(style='plain', axis='x', scilimits=(0,0))
-    
-    axs[0].legend(loc="upper right")
-    axs[-1].set_xlabel("Position (bp)")
-    plt.tight_layout()
-    plt.savefig(out_fig_path, dpi=300, bbox_inches='tight')
-    plt.close(fig)
 
 if __name__ == "__main__":
-    model = sys.argv[1]
-    if model == "ft":
-        path = "models/ft_sel_bin_pan2/"
-        preds = "SEL/ftbinpan2_preds_{pop}.npz"
-        output = "SEL/ftbinpan2_"
-    elif model == "lp":
-        path = "models/lp_sel_bin_pan2/"
-        preds = "SEL/lpbinpan2_preds_{pop}.npz"
-        output = "SEL/lpbinpan2_"
-    elif model == "lpft":
-        path = "models/lpft_selbin_pan/checkpoint-500"
-        preds = "SEL/lpftbinpan_preds_{pop}.npz"
-        output = "SEL/lpftbinpan_"
-    elif model == "anc":
-        path = "models/lp_ancient_x/checkpoint-4600"
-        preds = "ANC/preds_{pop}.npz"
-        output = "ANC/"
+    parser = argparse.ArgumentParser()
+    parser.add_argument('data', type=str, help='Path to dataset')
+    parser.add_argument('model', type=str, help='Path to model')
+    parser.add_argument('--save_features', type=str, help='Path for saving features')
+    parser.add_argument('--save_logits', type=str, help='Path for saving logits')
+    parser.add_argument('--logits_path', type=str, help='Path for loading logits')
+    parser.add_argument('--plot_preds', type=str, help='Path to save the Manhattan plot')
+    parser.add_argument('--smooth_window', type=int, default=7, help='Smoothing window size')
 
-    pops = ["CEU"]
-    # pops = ["CEU", "CHB", "YRI"]
-    # for pop in pops:
-    #     sweep(f"SEL/tokenized_{pop}", path, preds.format(pop=pop))
+    args = parser.parse_args()
 
-    # plot(".png", agg="mean")
-    plot_manhattan(preds, output + "manhattan.png", populations=pops, window=15)
-    plot_chr2_lct(preds, output + "lct.png", populations=pops)
+    data = args.data
+    model = args.model
+    preds_path = None
+
+    if args.save_logits or args.save_features:
+        preds_path = args.save_logits
+        sweep(data, model, args.save_logits, args.save_features)
+    
+    if args.plot_preds:
+        preds_path = args.logits_path if args.logits_path else preds_path
+        if not os.path.exists(preds_path):
+            raise ValueError(f"Predictions path {preds_path} does not exist. Run with --save_logits first or specify with --logits_path.")
+        plot_manhattan(preds_path, args.plot_preds, populations=("CEU",), window=args.smooth_window)

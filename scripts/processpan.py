@@ -10,18 +10,17 @@ sys.path.append(".")
 from dataset import find_nonzero_block_cols
 from pg_gan import global_vars
 
-MIDDLE_ONLY = False
 MAX = 5000
 
 FILE = "{pop}_{typ}{seed}.trees"
 MAX_HAPS = 256
-MAX_SNPS = 64 if MIDDLE_ONLY else 512
+MAX_SNPS = 512
 
-def main(dir, out):
+def main(d, out):
     # paths
-    dir = os.path.dirname(dir)
-    metadata = os.path.join(dir, "sweep_metadata.csv")
-    metadata2 = os.path.join(dir, "neutral_metadata.csv")
+    d = os.path.dirname(d)
+    metadata = os.path.join(d, "sweep_metadata.csv")
+    metadata2 = os.path.join(d, "neutral_metadata.csv")
     os.makedirs(out, exist_ok=True)
 
     # input metadat
@@ -39,7 +38,7 @@ def main(dir, out):
     neutral_df = pd.concat([neutral_df, pd.DataFrame(neutrals, columns=df.columns[-4:])], axis=1)
     df = pd.concat([df, neutral_df])
     df["sim"] = "Sept25"
-    df["pop"] = "pan_3"
+    df["pop"] = "pan_2"
     
     # store results
     matrices = np.zeros((total, MAX_HAPS, MAX_SNPS))
@@ -52,7 +51,7 @@ def main(dir, out):
     for subdir in ["sweep", "neutral"]:
         for seed in range(n_seeds):
             pbar.update(1)
-            filename = os.path.join(dir, subdir, FILE.format(pop="human", 
+            filename = os.path.join(d, subdir, FILE.format(pop="human", 
                                                              typ=subdir,
                                                              seed=seed))
             
@@ -66,21 +65,8 @@ def main(dir, out):
 
             gt_matrix = gt_matrix.T
 
-            if MIDDLE_ONLY:
-                first, last = find_nonzero_block_cols(gt_matrix)
-                
-                # take middle SNPs
-                mid = (first + last) // 2
-                half = 32 # middle 64 SNPs
-                first = max(0, mid - half)
-                last = min(num_snps, mid + half)
-
-                # store
-                matrices[i, :num_haps, :(last-first)] = gt_matrix[:, first:last]
-                distances[i, :(last-first)] = dist_vec[first:last]
-            else:
-                matrices[i, :num_haps, :num_snps] = gt_matrix[:, :num_snps]
-                distances[i, :num_snps] = dist_vec[:num_snps]
+            matrices[i, :num_haps, :num_snps] = gt_matrix[:, :num_snps]
+            distances[i, :num_snps] = dist_vec[:num_snps]
 
             ns.append(num_snps)
 

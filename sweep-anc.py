@@ -247,9 +247,8 @@ if __name__ == "__main__":
     # test_evens("ANC/tokenized_CEU", path)
 
     pops = ["CEU"]
-    # pops = ["CEU", "CHB", "YRI"]
+    pops = ["CEU", "CHB", "YRI"]
     for pop in pops:
-        # sweep(f"ANC/tokenized_{pop}", path, preds)
+        sweep(f"ANC/tokenized_{pop}", path, preds)
         high_preds_query(preds, output + "_preds.csv")
         plot_manhattan(preds, output + f"{pop}_manhattan_lp.png")
-    

@@ -1,117 +1,44 @@
 """
-Utilities for a dataset.
+Utilities for generating Huggingface datasets for haplotype windows.
 """
 
-import argparse
+from collections.abc import Generator
 import os
-
+import argparse
 import numpy as np
-from datasets import Dataset, Features, Array2D, Value, List, DatasetDict
-import pandas as pd
+from datasets import Dataset, Features, Array2D, Value, List, concatenate_datasets
 from tqdm import tqdm
-import matplotlib.pyplot as plt
+import tskit
+import allel
 
 from pg_gan import global_vars
-from pg_gan import util
-from pg_gan.generator import Generator
-from pg_gan.global_vars import DEFAULT_SEED, NUM_SNPS
 from pg_gan.real_data_random import RealDataRandomIterator
-from pg_gan.ss_helpers import parse_output
-from pg_gan.util import parse_args, process_opts
-
-VERSION = 4
-
-OUTFILE_PATH = "outfiles/{pop}/{pop}_{seed}_{model}.out"
-GENOME_PATH = "/bigdata/smathieson/1000g-share/HDF5/{pop}.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.h5"
-BED_PATH = "/bigdata/smathieson/1000g-share/HDF5/20120824_strict_mask.bed"
 
 BOS_TOKEN = 2
 EOS_TOKEN = 3
+MASK_TOKEN = 4
 PAD_TOKEN = 5
+NUM_SNPS = 512
 MAX_HAPS = 256
 
-pop = None
+def get_iterator(
+    h5_file: str, bed_file: str | None, seed: int | None
+) -> RealDataRandomIterator:
+    iterator = RealDataRandomIterator(filename=h5_file, bed_file=bed_file, seed=seed)
 
-_OUTPUT_SAMPLES = f"dataset{VERSION}/samples.npz"
-
-
-def read_outfile(file: str) -> Generator:
-    """
-    Load parameters from a file, returns a generator with those params.
-    """
-    if not os.path.exists(file):
-        raise FileNotFoundError(f"File {file} does not exist.")
-
-    # condensed output file parsing for options. don't print
-    param_values, in_file_data = parse_output(file)
-    opts, param_values = parse_args(
-        in_file_data=in_file_data, param_values=param_values
-    )
-    generator, _, _, _ = process_opts(opts, summary_stats=True)
-    generator.update_params(param_values)
-
-    print("Loaded generator:")
-    print(generator.curr_params)
-
-    return generator
-
-
-def get_iterator(pop: str, seed=None, custom_bed=None, use_bed=True) -> RealDataRandomIterator:
-    h5_file = GENOME_PATH.format(pop=pop)
-    bed_file = BED_PATH if custom_bed is None else custom_bed
-    s = seed if seed is not None else DEFAULT_SEED
-    iterator = RealDataRandomIterator(filename=h5_file, 
-                                      bed_file=bed_file if use_bed else None, 
-                                      seed=s)
-
-    print(f"Loaded iterator: {pop} ({s})")
+    print(f"Loaded iterator: ({seed})")
     print(f"{iterator.num_snps} SNPs | {iterator.num_samples} samples")
 
     return iterator
 
 
-def get_iterator_ghist(name: str, bed_name: str) -> RealDataRandomIterator:
-    iterator = RealDataRandomIterator(filename=name, bed_file=bed_name, seed=0)
+def get_pos_and_dist_vec(ts, snps_total):
+    positions = [round(variant.site.position) for variant in ts.variants()]
+    assert len(positions) == snps_total
 
-    print(f"Loaded iterator: {name}")
-    print(f"{iterator.num_snps} SNPs | {iterator.num_samples} samples")
+    dist_vec = [0] + [(positions[j + 1] - positions[j]) for j in range(snps_total - 1)]
+    return positions, np.array(dist_vec)
 
-    return iterator
-
-
-def get_data(pop: str, n_samples: int, seed=None, snp=False) -> np.ndarray:
-    """
-    Get a dataset of real and simulated data.
-
-    Returns a tuple of (samples, labels, sources):
-        Samples is a numpy array of shape (n_samples, num_snps, 2).
-    """
-    iterator = get_iterator(pop=pop, seed=seed)
-
-    # get n_samples from each iterator
-    samples = np.zeros(
-        (n_samples, MAX_HAPS, NUM_SNPS + 2, 2), dtype=np.float32
-    )
-    # Collect the lengths for histogram
-    lengths = []
-    for i in tqdm(range(n_samples)):
-        if snp:
-            global_vars.NUM_SNPS = np.random.randint(32, NUM_SNPS)
-        sample = iterator.real_region(neg1=False, region_len=(not snp))
-        lengths.append(sample.shape[1])
-        samples[i] = tokenizer(sample)
-
-    # Print histogram of sample.shape[1]
-    bins = np.linspace(0, 1024, 32)
-    plt.hist(lengths, bins=bins, label=pop, alpha=0.5)
-    plt.xlabel("Number of SNPs (sample.shape[1])")
-    plt.ylabel("Frequency")
-    plt.legend()
-    plt.title(f"Histogram of SNP counts, window size {global_vars.L}")
-    if pop == "GBR" and not snp:
-        plt.savefig(f"figs/snp_hist_{global_vars.L}.png", dpi=300)
-
-    return samples
 
 def tokenizer(sample: np.ndarray) -> np.ndarray:
     # remove -1s if present, scale distances
@@ -129,8 +56,8 @@ def tokenizer(sample: np.ndarray) -> np.ndarray:
     eos_vec = np.full((n_haps, 1), EOS_TOKEN)
     zeros_vec = np.zeros((n_haps, 1))
 
-    haps = np.hstack([bos_vec, sample[:, :n_snps, 0], eos_vec])
-    dists = np.hstack([zeros_vec, sample[:, :n_snps, 1], zeros_vec])
+    haps = np.hstack([bos_vec, sample[:, :n_snps, 0], eos_vec]).astype(np.int8)
+    dists = np.hstack([zeros_vec, sample[:, :n_snps, 1], zeros_vec]).astype(np.float16)
 
     if n_pad_snps > 0:
         pad_vec = np.full((n_haps, n_pad_snps), PAD_TOKEN)
@@ -140,11 +67,9 @@ def tokenizer(sample: np.ndarray) -> np.ndarray:
 
     if n_pad_haps > 0:
         pad_vec = np.full((n_pad_haps, global_vars.NUM_SNPS + 2), PAD_TOKEN)
-        zeros_pad_vec = np.zeros((n_pad_haps, global_vars.NUM_SNPS + 2))
         haps = np.vstack([haps, pad_vec])
-        dists = np.vstack([dists, zeros_pad_vec])
 
-    return np.dstack([haps, dists])
+    return haps, dists[0]
 
 
 def make_features(
@@ -184,39 +109,6 @@ def make_features(
     return Features(features)
 
 
-def save_data(pop: str, samples: np.ndarray):
-    """
-    Save the dataset to npz and csv files.
-    """
-    d = os.path.dirname(_OUTPUT_SAMPLES)
-    if not os.path.exists(d):
-        os.makedirs(d, exist_ok=True)
-
-    np.savez_compressed(os.path.join(d, f"X_{pop}.npz"), X=samples)
-    print(f"Saved {len(samples)} samples with {samples.shape[2]} SNPs each.")
-
-
-def load_data(pop: str, dir=None) -> np.ndarray:
-    """
-    Load the dataset from the npz file.
-    Returns a tuple of (samples, labels).
-    """
-    if dir:
-        file = os.path.join(dir, "samples.npz")
-    else:
-        file = _OUTPUT_SAMPLES
-    d = os.path.dirname(file)
-    if not os.path.exists(d):
-        raise FileNotFoundError(f"Dataset path {file} does not exist.")
-
-    # Load samples and labels into memory
-    samples = np.load(os.path.join(d, f"X_{pop}.npz"))["X"]
-
-    print(f"Loaded {len(samples)} samples with {samples.shape[2]} SNPs each.")
-
-    return samples
-
-
 def find_nonzero_block_cols(sample: np.ndarray) -> tuple[int, int]:
     """
     Find the first and last col indices in a 2D array that are not all zeros.
@@ -226,344 +118,255 @@ def find_nonzero_block_cols(sample: np.ndarray) -> tuple[int, int]:
     assert len(sample.shape) == 2, "sample should be a 2D array of (haps, snps)"
     # sample: shape (n_rows, n_cols)
     nonzero_mask = ~(np.all(sample == 0, axis=0))
-    nonzero_indices = np.where(nonzero_mask)[0]
+    nonzero_indices = np.nonzero(nonzero_mask)[0]
     if nonzero_indices.size == 0:
         return (None, None)
     return (nonzero_indices[0], nonzero_indices[-1])
 
 
-if __name__ == "__main__":
-    # "Usage: python dataset.py <gen | tokenize> [n_samples] pop")
-    parser = argparse.ArgumentParser(description="Process dataset")
-    parser.add_argument(
-        "mode",
-        help="Mode to run",
-    )
-    parser.add_argument(
-        "--n_samples", type=int, default=1000, help="Number of samples"
-    )
-    parser.add_argument("--extra", type=str, default="")
-    parser.add_argument("--extra2", type=str, default="")
-    args = parser.parse_args()
+def parse_hdf5_random(filepath: str, args) -> tuple[Generator, Features]:
+    # shuffle means get random chromosomal windows
+    def gen():
+        # use pg gan iterator to get regions
+        it = get_iterator(filepath, args.bed_file, args.seed)
+        for _ in range(args.n_samples):
+            sample = it.real_region(neg1=False, region_len=True)
+            region, distance = tokenizer(sample)
+            yield {
+                "input_ids": region,
+                "distances": distance,
+            }
+    features = make_features()
+    return gen, features
 
-    mode = args.mode
-    n_samples = args.n_samples
 
-    if mode == "gen":
-        if args.extra == "genomewindow":
-            for pop in ["CEU", "CHB", "YRI", "CHS", "ESN", "GBR"]:
-                global_vars.L = 50000
-                samples = get_data(pop=pop, n_samples=n_samples, seed=0)
-                save_data(pop, samples)
-        elif args.extra == "snpwindow":
-            for pop in ["CEU", "CHB", "YRI", "CHS", "ESN", "GBR"]:
-                global_vars.NUM_SNPS = 512
-                samples = get_data(pop=pop, n_samples=n_samples, seed=0, snp=True)
-                save_data(pop, samples)
-    elif mode == "runsimple":
-        def gen():
-            for pop in ["CEU", "CHB", "YRI", "CHS", "ESN", "GBR"]:
-                samples = load_data(pop)
-                for sample in samples:
-                    yield {
-                        "input_ids": sample[..., 0],
-                        "distances": sample[0, :, 1],  # all haps same dists
-                        "pop": pop,
-                    }
+def parse_hdf5_inorder(filepath: str, args) -> tuple[Generator, Features]:
+    # we're not shuffling: get windows in order from all chroms
+    # or user specified chroms
+    if args.chrom is not None:
+        chroms = [args.chrom]
+    else:
+        chroms = list(range(1, 23))
 
-        # Save tokenized data
-        dataset = Dataset.from_generator(gen, features=make_features(include_pop=True))
-        dataset.save_to_disk(f"dataset{VERSION}/tokenized")
+    def gen():
+        # use pg gan iterator to get regions
+        it = get_iterator(filepath, args.bed_file, args.seed)
+        for chrom in chroms:
+            bound = it._chrom_bounds(chrom)
+            tqdm.write(f"{chrom} | {bound[0]} - {bound[1]}")
+            pos, i = 0, 0
+            while pos < bound[1]:
+                pos = it.find(i, chrom)
+                i = i + args.window_jump
 
-    elif mode == "runrealsim":
-        def gen():
-            for pop in ["CEU", "CHB", "YRI"]:
-                samples = np.load(f"../disc-interpret/dataset-{pop}/X.npy")
-                labels = np.load(f"../disc-interpret/dataset-{pop}/y.npy")
-
-                subset = np.random.choice(samples.shape[0], n_samples, replace=False)
-                samples = samples[subset]
-                labels = labels[subset]
-
-                for sample, label in zip(samples, labels):
-                    sample = tokenizer(sample)
-                    yield {
-                        "input_ids": sample[..., 0],
-                        "distances": sample[0, :, 1],
-                        "label": label,
-                    }
-
-        features = make_features(label_dtype="int8", label_resolution="window")
-        # Save tokenized data
-        dataset = Dataset.from_generator(gen, features=features)
-        dataset.save_to_disk(f"dataset{VERSION}/ft_realsim_tkns")
-    elif mode == "runsel":
-        allsamples: np.ndarray = np.load("1000g/combined_pan_3/matrices.npy", mmap_mode="r")
-        alldistances: np.ndarray = np.load("1000g/combined_pan_3/distances.npy", mmap_mode="r")
-        df = pd.read_csv("1000g/combined_pan_3/metadata.csv", memory_map=True)
-        filt = None
-        global_vars.NUM_SNPS = 512
-
-        def gen():
-            # sel = df["coeff"].to_numpy(dtype=np.float16)
-            sel = df["coeff"].to_numpy()
-            sel = (sel > 0).astype(int)
-
-            for i, (sample, dist, s) in enumerate(zip(allsamples, alldistances, sel)):
-                if not filt[i]:
-                    continue
-
-                # only nonzero
-                first, last = find_nonzero_block_cols(sample)
-                sample = sample[:, first:last]
-                dist = dist[first:last]
-
-                sample = np.dstack([
-                    sample,
-                    dist[None, :].repeat(sample.shape[0], axis=0)
-                ])
-                sample = tokenizer(sample)
-
-                yield {
-                    "input_ids": sample[..., 0],
-                    "distances": sample[0, :, 1],
-                    "label": s,
-                }
-                    
-        features = make_features(label_dtype="int8", label_resolution="window")
-        # Save tokenized data
-        filt = df["pop"] == "pan_3"
-        train_dataset = Dataset.from_generator(gen, features=features)
-        filt = df["pop"] == "YRI"
-        test_dataset = Dataset.from_generator(gen, features=features)
-        dataset = DatasetDict({
-            "train": train_dataset,
-            "test": test_dataset,
-        })
-        dataset.save_to_disk(f"dataset{VERSION}/ft_selbin3_fixwindow_tkns")
-    elif mode == "ghist":
-        global_vars.L = 100000
-        global_vars.NUM_SNPS = 512
-        t = args.extra
-        def gen():
-            it = get_iterator_ghist(
-                f"GHIST/process/GHIST_2025_{t}.21.testing_process.h5", "GHIST/raw/21.accessible.bed"
-            )
-            n_snps = it.num_snps
-            bound = it._chrom_bounds(21)
-
-            for i in range(0, 500000000, 50000):
-                pos = it.find(i, 21)
-                if pos > bound[1]:
+                region = it.real_region(
+                    neg1=False, region_len=True, start_idx=pos, return_pos=True
+                )
+                if region == "end_chrom":
                     break
-
-                region = it.real_region(neg1=False, region_len=True, start_idx=pos, return_pos=True)
                 if region is None:
                     continue
-                
+
                 region, s, e, c = region
-                sample = tokenizer(region)
+                region, distance = tokenizer(region)
+                
                 yield {
-                    "input_ids": sample[..., 0], 
-                    "distances": sample[0, :, 1], "start_pos": s, "end_pos": e,
-                    "chrom": c
+                    "input_ids": region,
+                    "distances": distance,
+                    "start_pos": s,
+                    "end_pos": e,
+                    "chrom": c,
                 }
 
+    features = make_features(include_pos=True)
+    return gen, features
 
-        features = make_features(include_pos=True)
-        # Save tokenized data
-        dataset = Dataset.from_generator(gen, features=features)
-        dataset.save_to_disk(f"GHIST/samples_rl{t}_{global_vars.L}")
+
+def parse_hdf5(filepath: str, args) -> tuple[Generator, Features]:
     
-    elif mode == "lai":
-        pass
-    elif mode == "realsel":
-        pop = args.extra
-        global_vars.NUM_SNPS = 32
-        global_vars.L = 25000
-        MAX_HAPS = 5008
-        def gen():
-            it = get_iterator(pop, 0, None) # use_bed=False) #"SEL/chr1.bed")
-            for chrom in range(1, 2):
-                bound = it._chrom_bounds(chrom)
-                tqdm.write(f"Pop {pop} | Chrom {chrom:<2d} | {bound}")
-                for i in range(0, 500_000_000, 25000):
-                    pos = it.find(i, chrom)
-                    if pos > bound[1]:
-                        break
+    # parse_file should always return a generator function
+    if args.shuffle:
+        return parse_hdf5_random(filepath, args)
+    else:
+        return parse_hdf5_inorder(filepath, args)
 
-                    region = it.real_region(neg1=False, region_len=True, start_idx=pos, return_pos=True)
-                    if region is None:
-                        continue
-                    
-                    region, s, e, c = region
-                    sample = tokenizer(region)
-                    yield {
-                        "input_ids": sample[..., 0], 
-                        "distances": sample[0, :, 1], "start_pos": s, "end_pos": e,
-                        "chrom": c
-                    }
 
-        features = make_features(include_pos=True)
-        # Save tokenized data
-        dataset = Dataset.from_generator(gen, features=features)
-        dataset.save_to_disk(f"SEL/tokenized_{pop}")
-    
-    elif mode == "fasternn":
-        global_vars.NUM_SNPS = 128
-        def gen():
-            samples = np.load("FASTER_NN/fasternn_regions_majmin.npy")
-            distances = np.load("FASTER_NN/fasternn_distances_majmin.npy")
-            for sample, distance in zip(samples, distances):
-                region = np.dstack([
-                    sample,
-                    distance[None, :].repeat(sample.shape[0], axis=0)
-                ])
-                region = tokenizer(region)
-                yield {
-                    "input_ids": region[..., 0],
-                    "distances": region[0, :, 1]
-                }
+def parse_trees_random(filepath: str, args) -> tuple[Generator, Features]:
+    rng = np.random.default_rng(args.seed)
+    def gen():
+        # process tree
+        ts = tskit.load(filepath)
+        gt_matrix = ts.genotype_matrix()
+        num_snps = gt_matrix.shape[0]
+        positions, dist_vec = get_pos_and_dist_vec(ts, num_snps)
 
-        # Save tokenized data
-        dataset = Dataset.from_generator(gen, features=make_features())
-        dataset.save_to_disk("FASTER_NN/tokenized_majmin")
-    elif mode == "imputation":
+        gt_matrix = gt_matrix.T
 
-        def shuffle(arr, n):
-            # arr is (n_snps, n_haps)
-            arr_t = arr.T  # (n_haps, n_snps)
-            n_haps, n_snps = arr_t.shape
-            tgt = arr_t[-n:, :]
-            ref = arr_t[:-n, :]
-            tgt_positions = np.random.choice(n_haps, n, replace=False)
-            tgt_positions = np.sort(tgt_positions)
-            new_arr = np.zeros_like(arr_t)
-            new_arr[tgt_positions, :] = tgt
-            remaining_positions = np.setdiff1d(np.arange(n_haps), tgt_positions)
-            new_arr[remaining_positions, :] = ref
-            return new_arr.T
+        cum_pos = np.cumsum(dist_vec)
 
-        global_vars.NUM_SNPS = 256
-        samples_list = []
-        it = get_iterator_ghist(
-            "IMP/KHV.chr20.64_ref.h5",
-            None
-        )
-        it2 = get_iterator_ghist(
-            "IMP/KHV.chr20.64_tgt.h5",
-            None
-        )
-        n = it2.num_samples
-        n_snps = it.num_snps
-        n_haps_ref = it.num_samples
-        n_haps = it.num_samples + it2.num_samples
-        tqdm.write(f"{n_snps}, {n_haps}")
+        last_pos = int(cum_pos[-1])
+        start_bp = 0
+        for _ in range(args.n_samples):
+            start_bp = np.random.randint(0, last_pos - 64)
+            start_idx = int(np.searchsorted(cum_pos, start_bp, side="left"))
+            # TODO which arg controls how long this should be
+            length = rng.integers(low=16, high=64)
+            end_idx = start_idx + length
 
-        region = positions = None
+            m = gt_matrix[:, start_idx:end_idx]
+            d = dist_vec[start_idx:end_idx].copy()
+            p = positions[start_idx:end_idx]
+            d[0] = 0
 
-        snp_ref = snp_tgt = 0
-        while snp_ref < n_snps:
-            cur_idx = snp_ref % global_vars.NUM_SNPS
-            if cur_idx == 0:
-                if snp_tgt != 0:
-                    # save if not first
-                    # region = shuffle(region, n)
-                    dist_vec = [0] + [(positions[j+1] - positions[j])/global_vars.L
-                        for j in range(len(positions)-1)]
-
-                    region = util.process_gt_dist(region, dist_vec,
-                        region_len=False, real=True, neg1=False)
-                    
-                    sample = tokenizer(region)
-
-                    samples_list.append({
-                        "input_ids": sample[..., 0],
-                        "distances": sample[0, :, 1],
-                        "positions": positions
-                    })
-
-                region = np.zeros((global_vars.NUM_SNPS, n_haps))
-                positions = np.zeros((global_vars.NUM_SNPS, ))
-            pos_ref = it.pos_all[snp_ref]
-            pos_tgt = it2.pos_all[snp_tgt]
-
-            while pos_ref < pos_tgt:
-                # mask the tgt sample at this pos
-                region[cur_idx, n_haps_ref:] = 4
-                region[cur_idx, :n_haps_ref] = it.haps_all[snp_ref, :]
-                positions[cur_idx] = it.pos_all[snp_ref]
-
-                snp_ref += 1
-                cur_idx = snp_ref % global_vars.NUM_SNPS
-                pos_ref = it.pos_all[snp_ref]
-
-            region[cur_idx, n_haps_ref:] = it2.haps_all[snp_tgt, :]
-            region[cur_idx, :n_haps_ref] = it.haps_all[snp_ref, :]
-            positions[cur_idx] = it.pos_all[snp_ref]
-
-            snp_ref += 1
-            snp_tgt += 1
-        
-        # Handle the last region if it wasn't saved
-        if region is not None and positions is not None:
-            region = shuffle(region, n)
-            dist_vec = [0] + [(positions[j+1] - positions[j])/global_vars.L
-                for j in range(len(positions)-1)]
-            region = util.process_gt_dist(region, dist_vec,
-                region_len=False, real=True, neg1=False)
+            dist = d[None, :].repeat(m.shape[0], axis=0)
+            region = np.dstack([m, dist])
             sample = tokenizer(region)
-            samples_list.append({
+
+            yield {
                 "input_ids": sample[..., 0],
                 "distances": sample[0, :, 1],
-                "positions": positions
-            })
+                "chrom": 0,
+                "positions": p,
+            }
 
-        features = make_features(include_snp_pos=True)
-        # Save tokenized data
-        dataset = Dataset.from_list(samples_list, features=features)
-        dataset.save_to_disk(f"IMP/KHV.chr20.64.{global_vars.NUM_SNPS}")
+            start_bp = start_bp + args.window_jump
 
-    elif mode == "ancientsel":
-        global_vars.NUM_SNPS = 512
-        global_vars.L = 50000
-        def gen():
-            it = get_iterator("CHB", 0, None)
-            df = pd.read_csv("ANC/Selection_Summary_Statistics_01OCT2025.tsv", comment="#", sep="\t")
-            df = df.set_index(["CHROM", "POS"])
-            for chrom in range(1, 23):
-                bound = it._chrom_bounds(chrom)
-                chrom_df = df.xs(chrom, level='CHROM')
-                chrom_df = chrom_df[~chrom_df.index.duplicated()]
-                tqdm.write(f"Pop {pop} | Chrom {chrom:<2d} | {bound}")
-                for i in range(0, 500_000_000, 50000):
-                    pos = it.find(i, chrom)
-                    if pos > bound[1]:
-                        break
+    features = make_features(include_snp_pos=True)
+    return gen, features
 
-                    region = it.real_region(neg1=False, region_len=True, start_idx=pos, return_all_pos=True)
-                    if region is None:
-                        continue
-                    
-                    region, positions, _ = region
-                    
-                    # xs = chrom_df["S"].reindex(positions).abs().values
-                    # if np.isnan(xs):
-                        # continue
-                    # tqdm.write(f"{xs}")
-                    
-                    xs = chrom_df["S"].reindex(positions).abs().fillna(-100)
 
-                    sample = tokenizer(region)
-                    yield {
-                        "input_ids": sample[..., 0], 
-                        "distances": sample[0, :, 1],
-                        "chrom": chrom,
-                        "positions": positions,
-                        "label": xs
-                    }
+def parse_trees_inorder(filepath: str, args) -> tuple[Generator, Features]:
+    def gen():
+        # process tree
+        ts = tskit.load(filepath)
+        gt_matrix = ts.genotype_matrix()
+        num_snps = gt_matrix.shape[0]
+        positions, dist_vec = get_pos_and_dist_vec(ts, num_snps)
 
-        features = make_features(label_dtype="float16", label_resolution="snp", include_snp_pos=True)
-        # Save tokenized data
+        gt_matrix = gt_matrix.T
+
+        # 50 kbp windows based on cumulative physical distance
+        cum_pos = np.cumsum(dist_vec)
+
+        last_pos = int(cum_pos[-1])
+        start_bp = 0
+        while start_bp <= last_pos:
+            end_bp = start_bp + args.window_size
+            start_idx = int(np.searchsorted(cum_pos, start_bp, side="left"))
+            end_idx = int(np.searchsorted(cum_pos, end_bp, side="left"))
+
+            m = gt_matrix[:, start_idx:end_idx]
+            d = dist_vec[start_idx:end_idx].copy()
+            p = positions[start_idx:end_idx]
+            d[0] = 0
+
+            dist = d[None, :].repeat(m.shape[0], axis=0)
+            region = np.dstack([m, dist])
+            sample = tokenizer(region)
+
+            yield {
+                "input_ids": sample[..., 0],
+                "distances": sample[0, :, 1],
+                "chrom": 0,
+                "positions": p,
+            }
+
+            start_bp = start_bp + args.window_jump
+
+    features = make_features(include_snp_pos=True)
+    return gen, features
+
+def parse_trees(filepath: str, args) -> tuple[Generator, Features]:
+    if args.shuffle:
+        return parse_trees_random(filepath, args)
+    else:
+        return parse_trees_inorder(filepath, args)
+
+def parse_file(filepath, args):
+    if os.path.isdir(filepath):
+        return None, None
+    ext = os.path.splitext(filepath)[1]
+    if ext == ".vcf":
+        # convert to h5
+        newfile = filepath.replace(".vcf", ".h5")
+        allel.vcf_to_hdf5(filepath, newfile, fields=["CHROM", "GT", "POS"])
+        ext = ".h5"
+        filepath = newfile
+
+    if ext == ".h5":
+        return parse_hdf5(filepath, args)
+    elif ext == ".trees":
+        return parse_trees(filepath, args)
+    else:
+        # non-.vcf, .h5 filetype
+        return None, None
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Process an input file/directory.")
+    parser.add_argument(
+        "input",
+        help="Input file or directory. Supported filetypes: "
+        "- vcf (converted to hdf5)"
+        "- hdf5"
+        "- txt (in ms format)"
+        "- .trees (output from stdpopsim)"
+        "- directories of any of the above formats",
+    )
+    parser.add_argument(
+        "output",
+        help="Path to output. Directories will be created if not existing, and "
+        "overwritten if existing. Output will be in a huggingface dataset.",
+    )
+    parser.add_argument(
+        "--bed_file", type=str, default=None, help="Optional BED file for masking."
+    )
+    parser.add_argument(
+        "--chrom", type=int, default=None, help="Chromosome to process. Default is all human autosomes (1-22)."
+    )
+    parser.add_argument(
+        "--L", type=int, default=50000, help="Window size"
+    )
+    parser.add_argument(
+        "--S", type=int, default=512, help="Number of SNPs"
+    )
+    parser.add_argument(
+        "--window_jump", type=int, default=50000, help="Window jump size."
+    )
+    parser.add_argument(
+        "--shuffle", action="store_true", help="Whether to shuffle samples"
+    )
+    parser.add_argument(
+        "--seed", type=int, default=None, help="Random seed"
+    )
+    parser.add_argument(
+        "--n_samples", type=int, default=100000, help="Number of samples to draw if shuffling."
+    )
+    args = parser.parse_args()
+
+    global_vars.L = args.L
+    global_vars.NUM_SNPS = args.S
+
+    if os.path.isdir(args.input):
+        # directory
+        files = os.listdir(args.input)
+        datasets = []
+        for file in files:
+            filepath = os.path.join(args.input, file)
+            gen, features = parse_file(filepath, args)
+            if gen is None:
+                print(f"Skipping unsupported file: {filepath}")
+                continue
+            datasets.append(Dataset.from_generator(gen, features=features))
+
+        dataset = concatenate_datasets(datasets)
+            
+    else:
+        # single file
+        gen, features = parse_file(args.input, args)
         dataset = Dataset.from_generator(gen, features=features)
-        dataset.save_to_disk("ANC/tokenized_CHB")
+        
+    dataset.save_to_disk(args.output)
+
+
+    

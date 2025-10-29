@@ -8,6 +8,15 @@ import sys
 sys.path.insert(0, ".")
 from pg_gan import util
 
+region_len = 4e6
+window_size = 50000
+scaled_lower = (region_len // 2 - window_size // 2) / region_len
+scaled_upper = (region_len // 2 + window_size // 2) / region_len
+
+site_region_len = 100000
+site_scaled_lower = (site_region_len // 2 - window_size // 2)
+site_scaled_upper = (site_region_len // 2 + window_size // 2)
+
 def load(dataset="1", split="test", neut=False) -> tuple[np.ndarray, np.ndarray]:
     """Process a FASTER_NN dataset (ms) and get matrices out."""
     neut = "BASE" if neut else "TEST"
@@ -15,17 +24,20 @@ def load(dataset="1", split="test", neut=False) -> tuple[np.ndarray, np.ndarray]
     path = glob.glob(path)
 
     n_haps = 128
-    n_snps = 128
+    n_snps = 512
     total = 1000
     pbar = tqdm(total=total)
 
     samples = np.zeros((total, n_haps, n_snps), dtype=np.int8)
     distances = np.zeros((total, n_snps), dtype=np.float32)
 
+    use_site = False
     with open(path[0], 'r') as f:
         for lineno, line in enumerate(f):
             if lineno < 2:
                 pbar.write(f"{line.strip()}")
+                if "-s" in line:
+                    use_site = True
                 continue
             if line[:2] == "//":
                 pbar.update(1)
@@ -34,17 +46,27 @@ def load(dataset="1", split="test", neut=False) -> tuple[np.ndarray, np.ndarray]
             if line[:9] == "positions":
                 # store distances
                 dist = np.array([float(s) for s in line[11:-2].split(" ")])
-                
-                n = dist.shape[0]
-                mid = n // 2
-                # they simulate 100000 positions
-                # lower = max(0, mid - n // 4)
-                lower = max(0, mid - n_snps // 2)
-                # upper = min(mid + n // 4, n)
-                upper = min(mid + n_snps // 2, n)
-                # pbar.write(f"{n}: [{lower}, {upper}]")
-                # pbar.write(f"{n}")
+                if use_site:
+                    mask = (dist >= site_scaled_lower) & (dist <= site_scaled_upper)
+                else:
+                    mask = (dist >= scaled_lower) & (dist <= scaled_upper)
+                indices = np.where(mask)[0]
 
+                n = dist.shape[0]
+
+                # assert len(indices) > 0, f"No SNPs in region for sample {smp} in dataset {dataset} {split}"
+                if len(indices) == 0:
+                    # no SNPs in region, just take first n_snps
+                    lower = 0
+                    upper = n_snps
+                else:
+                    lower = max(0, indices.min())
+                    upper = min(indices.max() + 1, lower + n_snps)
+
+                # pbar.write(f"{n}: [{lower}, {upper}] ({upper - lower})")
+
+                scale_factor = window_size / (dist[upper - 1] - dist[lower])
+                distances[smp, :(upper - lower)] *= scale_factor
                 distances[smp, :(upper-lower)] = (dist[lower:upper] - dist[lower])
 
             if line[0] in ["0", "1"]:
@@ -58,18 +80,21 @@ def load(dataset="1", split="test", neut=False) -> tuple[np.ndarray, np.ndarray]
 
 
 if __name__ == "__main__":
+    split = "test"
+    if len(sys.argv) > 1:
+        split = sys.argv[1]
     metas = []
     samples = []
     distances = []
 
     for ds in [str(x) for x in range(1, 7)]:
-        s, d = load(ds, "test", neut=True)
+        s, d = load(ds, split, neut=True)
         
         metas.extend([(f"D{ds}", 0)] * s.shape[0])
         samples.append(s)
         distances.append(d)
 
-        s, d = load(ds, "test", neut=False)
+        s, d = load(ds, split, neut=False)
         
         metas.extend([(f"D{ds}", 1)] * s.shape[0])
         samples.append(s)
@@ -86,6 +111,6 @@ if __name__ == "__main__":
 
     print(samples.shape, distances.shape)
 
-    np.save("FASTER_NN/fasternn_regions_majmin.npy", samples)
-    np.save("FASTER_NN/fasternn_distances_majmin.npy", distances)
-    meta.to_csv("FASTER_NN/fasternn_meta.csv", index=False)
+    np.save(f"FASTER_NN/fasternn_{split}_regions_50000.npy", samples)
+    np.save(f"FASTER_NN/fasternn_{split}_distances_50000.npy", distances)
+    meta.to_csv(f"FASTER_NN/fasternn_{split}_meta.csv", index=False)

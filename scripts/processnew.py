@@ -53,7 +53,7 @@ def main(dir, out):
                                                              seed=seed))
             
             
-            # process tree        
+            # process tree
             ts = tskit.load(filename)
             gt_matrix = ts.genotype_matrix()
             num_snps = gt_matrix.shape[0]

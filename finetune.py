@@ -91,8 +91,8 @@ if MODE == "pop":
 # train_dataset = dataset["train"]
 # eval_dataset = dataset["test"]
 
-test_dataset = dataset["test"].take(512)
-dataset = dataset["train"].train_test_split(0.1, shuffle=True)
+# test_dataset = dataset["test"].take(512)
+dataset = dataset.train_test_split(0.01, shuffle=True)
 train_dataset = dataset["train"]
 eval_dataset = dataset["test"]
 # eval_dataset = test_dataset

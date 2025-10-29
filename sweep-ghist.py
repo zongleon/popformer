@@ -8,13 +8,13 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 from scipy.signal import find_peaks
 
-def sweep(t: str, model: str, name: str):
-    data = load_from_disk(f"GHIST/samples_{t}")
+def sweep(t: str, model: str, preds_path: str):
+    data = load_from_disk(t)
 
     model = HapbertaForSequenceClassification.from_pretrained(
         model,
         torch_dtype=torch.bfloat16,
-        num_labels=2 if "bin" in name else 1
+        # num_labels=2 if "bin" in name else 1
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # device = "cpu"
@@ -41,42 +41,33 @@ def sweep(t: str, model: str, name: str):
 
     # Concatenate all logits, move to CPU, convert to numpy, and squeeze
     all_preds = torch.cat(preds, dim=0).to(torch.float16).cpu().numpy().squeeze()
-    np.savez(f"GHIST/{name}_{t}.npz", preds=all_preds, start_pos=data["start_pos"], end_pos=data["end_pos"])
 
+    if "positions" in data.column_names:
+        start_pos = [p[0] for p in data["positions"]]
+        end_pos = [p[-1] for p in data["positions"]]
+    else:
+        start_pos = data["start_pos"]
+        end_pos = data["end_pos"]
+    np.savez(preds_path, preds=all_preds, start_pos=start_pos, end_pos=end_pos)
 
-def sweep_snpdensity(t: str):
-    data = load_from_disk(f"GHIST/ghist_samples_{t}")
-
-    collator = HaploSimpleDataCollator(subsample=32, pad_batch=True)
-
-    preds = []
-
-    with torch.no_grad():
-        for i in tqdm(range(len(data))):
-            batch_samples = [data[i]]
-            batch = collator(batch_samples)
-            preds.append(batch["input_ids"].shape[2])
-
-    preds = np.array(preds)
-    np.savez(f"GHIST/snpdens_{t}.npz", preds=preds, start_pos=data["start_pos"], end_pos=data["end_pos"])
-
-def plot_smooth(t: str, name: str):
-    data = np.load(f"GHIST/{name}_{t}.npz")
-    if "snpdens" in name:
+def plot_smooth(preds_path: str, output: str):
+    data = np.load(preds_path)
+    if "snpdens" in preds_path:
         preds = data["preds"]
         ylbl = "num SNPs in window"
-    elif "reg" in name:
+    elif "selreg" in preds_path:
         preds = data["preds"]
         ylbl = "pred. selection coeff."
     else:
         preds = torch.softmax(torch.tensor(data["preds"]), dim=-1)[:, 1].numpy()
         # preds = np.log(preds)
         ylbl = "pred. probability of selection"
+        
     start_pos = data["start_pos"]
     end_pos = data["end_pos"]
 
     # Smooth predictions by averaging over surrounding predictions
-    window = 7
+    window = 5
     smooth_preds = np.zeros_like(preds)
     for i in range(len(preds)):
         left = max(0, i - window // 2)
@@ -84,14 +75,13 @@ def plot_smooth(t: str, name: str):
         smooth_preds[i] = np.mean(preds[left:right])
     pos = start_pos
 
-    plt.figure(figsize=(12, 6))
-    plt.plot(pos, smooth_preds, linewidth=0.8, alpha=0.8)
+    plt.figure(figsize=(12, 6), layout="constrained")
+    plt.scatter(pos, smooth_preds, alpha=0.8)
     plt.xlabel('Position (bp)')
     plt.ylabel(ylbl)
     plt.grid(True, alpha=0.3, linestyle='--')
     plt.ticklabel_format(style='plain', axis='x', scilimits=(0,0))
-    plt.tight_layout()
-    plt.savefig(f'GHIST/{name}_{t}_smooth.png', dpi=300, bbox_inches='tight')
+    plt.savefig(output, dpi=300)
 
 
 def plot_combine(name: str):
@@ -101,10 +91,7 @@ def plot_combine(name: str):
     fig, axs = plt.subplots(2, 2, figsize=(14, 10), sharex=True, sharey=True)
     for idx, t in enumerate(ts):
         data = np.load(f"GHIST/{name}_{t}.npz")
-        if "snpdens" in name:
-            preds = data["preds"]
-            ylbl = "num SNPs in window"
-        elif "reg" in name:
+        if "selreg" in name:
             preds = data["preds"]
             ylbl = "pred. selection coeff."
         else:
@@ -115,7 +102,7 @@ def plot_combine(name: str):
         start_pos = data["start_pos"]
 
         # Smooth predictions by averaging over surrounding predictions
-        window = 9
+        window = 5
         smooth_preds = np.zeros_like(preds)
         for i in range(len(preds)):
             left = max(0, i - window // 2)
@@ -148,7 +135,7 @@ def plot_combine(name: str):
                 # BED format: chrom, start, end, name, score
                 bed_lines.append(f"21\t{pos-100000}\t{pos+300000}")
 
-            bed_file = f"GHIST/submit/{name}_{t}_3.bed"
+            bed_file = f"GHIST/submit/{name}_{t}_3.bed" 
             with open(bed_file, "w") as f:
                 for line in bed_lines:
                     f.write(line + "\n")
@@ -168,9 +155,20 @@ def plot_combine(name: str):
     plt.tight_layout()
     plt.savefig(f'GHIST/{name}_combine_smooth.png', dpi=300, bbox_inches='tight')
 
+    
+
 
 if __name__ == "__main__":
+    # path = "models/ft_selbin3_v2_1"
+    # preds = "1000g/regiontest/preds_4.npz"
+    # output = "figs/manhattan_regiontest_4.png"
+
+    # sweep("dataset4/tokenized_regiontest_4", path, preds)
+    # plot_smooth(preds, output)
+    # raise SystemExit
+
     t = sys.argv[1]
+    tp = f"GHIST/samples_{t}"
     name = sys.argv[2]
 
     model = None
@@ -179,12 +177,12 @@ if __name__ == "__main__":
 
     if model is not None:
         if model != "nopred":
-            sweep(t, model, name)
+            sweep(tp, model, name)
     else:
         plot_combine(name)
         raise SystemExit
     # sweep_snpdensity(t)
     # plot(t, name)
     # plot2(t, name)
-    plot_smooth(t, name)
+    plot_smooth(f"GHIST/{name}_{t}.npz", f"GHIST/{name}_{t}_smooth.png")
     # select(t, 0.2)

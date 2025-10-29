@@ -26,7 +26,7 @@ class HaploSimpleDataCollator:
 
     def __init__(
         self,
-        subsample: tuple[int, int]=(32, 32),
+        subsample: tuple[int, int] | None = None,
         mlm_probability=0.,
         whole_snp_mask_probability=0.,
         span_mask_probability=0.,
@@ -115,7 +115,15 @@ class HaploSimpleDataCollator:
             max_len = 512
         
         # subsample storage
-        subs = None
+        # find the position of the maximum number of non-padded haplotypes
+        max_n_non_pad = max(
+            len((~(torch.tensor(ex["input_ids"]) == self.pad_token_id).all(dim=1)).nonzero(as_tuple=True)[0])
+            for ex in examples
+        )
+        if self.subsample is not None:
+            subs = torch.randint(self.subsample[0], min(self.subsample[1], max_n_non_pad) + 1, (1,)).item()
+        else:
+            subs = max_n_non_pad
 
         for idx, ex in enumerate(examples):
             # list of list of input_ids
@@ -138,14 +146,6 @@ class HaploSimpleDataCollator:
             n_non_pad = len(non_pad_indices)
 
             # Subsample only from non-padded haplotypes
-            if self.subsample is None:
-                subs = n_non_pad
-            elif self.subsample[0] == self.subsample[1]:
-                subs = self.subsample[0]
-            else:
-                if subs is None:
-                    subs = torch.randint(self.subsample[0], min(self.subsample[1], n_non_pad) + 1, (1,)).item()
-        
             if n_non_pad == subs:
                 selected = non_pad_indices
             elif n_non_pad > subs:

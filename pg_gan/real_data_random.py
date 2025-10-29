@@ -268,7 +268,7 @@ class RealDataRandomIterator:
                 if recursive:
                     return self.real_region(neg1, region_len) # try again
                 else:
-                    return None
+                    return "end_chrom"
 
         else:
             end_idx = start_idx + global_vars.NUM_SNPS # exclusive

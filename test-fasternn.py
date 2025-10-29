@@ -95,6 +95,6 @@ if __name__ == "__main__":
     # output = "FASTER_NN/ftbinpan2_"
     # preds = "FASTER_NN/lpbinpan2_preds.npy"
     
-    test("FASTER_NN/tokenized_majmin", path, preds)
+    test("FASTER_NN/tokenized_majmin512", path, preds)
     acc(preds)
     
