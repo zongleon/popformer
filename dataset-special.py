@@ -4,7 +4,7 @@ Some specialty dataloaders for specific datasets.
 
 import numpy as np
 import sys
-from datasets import Dataset
+from datasets import Dataset, concatenate_datasets
 import pandas as pd
 from tqdm import tqdm
 import tskit
@@ -205,20 +205,20 @@ if __name__ == "__main__":
         dataset = Dataset.from_generator(gen, features=make_features(label_dtype="int8", label_resolution="window"))
         dataset.save_to_disk(f"FASTER_NN/tokenized_{split}_50000")
     elif mode == "runsel":
-
+        which = sys.argv[2]
         allsamples: np.ndarray = np.load(
-            "1000g/pan_2/matrices.npy", mmap_mode="r"
+            f"1000g/{which}/matrices.npy", mmap_mode="r"
         )
         alldistances: np.ndarray = np.load(
-            "1000g/pan_2/distances.npy", mmap_mode="r"
+            f"1000g/{which}/distances.npy", mmap_mode="r"
         )
-        df = pd.read_csv("1000g/pan_2/metadata.csv", memory_map=True)
+        df = pd.read_csv(f"1000g/{which}/metadata.csv", memory_map=True)
         global_vars.NUM_SNPS = 512
 
         def gen():
-            sel = df["coeff"].to_numpy(dtype=np.float16)
-            # sel = df["coeff"].to_numpy()
-            # sel = (sel > 0).astype(int)
+            # sel = df["coeff"].to_numpy(dtype=np.float16)
+            sel = df["coeff"].to_numpy()
+            sel = (sel > 0).astype(int)
 
             for i, (sample, dist, s) in enumerate(zip(allsamples, alldistances, sel)):
                 # only nonzero
@@ -240,8 +240,8 @@ if __name__ == "__main__":
         features = make_features(label_dtype="float16", label_resolution="window")
 
         dataset = Dataset.from_generator(gen, features=features)
-        dataset.save_to_disk("dataset/ft_selreg2")
-    elif mode == "runsel_bigwindow":
+        dataset.save_to_disk(f"dataset/selbin_{which}")
+    elif mode == "runsel_bigregion":
         rng = np.random.default_rng()
         def gen(fpath: str, mpath: str):
             # process tree
@@ -258,7 +258,7 @@ if __name__ == "__main__":
 
             last_pos = int(cum_pos[-1])
             start_bp = 0
-            for _ in range(10000):
+            for _ in range(5000):
                 start_bp = np.random.randint(0, last_pos - 64)
                 start_idx = int(np.searchsorted(cum_pos, start_bp, side="left"))
                 length = rng.integers(low=16, high=64)
@@ -296,4 +296,8 @@ if __name__ == "__main__":
         dataset = Dataset.from_generator(lambda: gen("1000g/regiontest/ghist_const4.trees",
                                                      "1000g/regiontest/ghist_const4.out"),
                                          features=features)
-        dataset.save_to_disk("dataset/ft_selbin_bigwindow")
+        dataset2 = Dataset.from_generator(lambda: gen("1000g/regiontest/ghist_const6.trees",
+                                                      "1000g/regiontest/ghist_const6.out"),
+                                          features=features)
+        dataset = concatenate_datasets([dataset, dataset2])
+        dataset.save_to_disk("dataset/selbin_bigregion")

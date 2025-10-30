@@ -10,6 +10,7 @@ IMP/
 ANC/
 models/
 tokenizer/
+outs/
 figs/
 
 *.pth

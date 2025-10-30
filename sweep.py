@@ -10,7 +10,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import pandas as pd
 
-def sweep(dataset, model, save_preds_path=None, save_features_path=None):
+def sweep(dataset, model, save_preds_path=None, save_features_path=None, subsample=None):
     data = load_from_disk(dataset)
 
     model = HapbertaForSequenceClassification.from_pretrained(
@@ -22,8 +22,7 @@ def sweep(dataset, model, save_preds_path=None, save_features_path=None):
     model.to(device)
     model.eval()
 
-    # collator = HaploSimpleDataCollator(subsample=(32, 32))
-    collator = HaploSimpleDataCollator(subsample=None)
+    collator = HaploSimpleDataCollator(subsample=(subsample, subsample) if subsample else None)
 
     loader = DataLoader(
         data,
@@ -81,8 +80,6 @@ def plot(out_fig_path, agg="mean"):
     from matplotlib import colormaps
 
     # Load sel.csv and bed
-    bed_df = pd.read_csv("SEL/bed.bed", sep="\t", header=None)
-    bed_df.columns = ["Chromosome", "Start", "End"]
     sel_df = pd.read_csv("SEL/sel.csv")
     
     populations = sel_df["Population"].unique()
@@ -91,11 +88,11 @@ def plot(out_fig_path, agg="mean"):
     pop_colors = {pop: colors(i) for i, pop in enumerate(populations)}
 
     # For each region in bed, plot predictions for each population
-    n_regions = len(bed_df)
+    n_regions = len(sel_df)
     fig, axs = plt.subplots(n_regions, 1, figsize=(12, 4 * n_regions), sharex=False)
     if n_regions == 1:
         axs = [axs]
-    for idx, row in bed_df.iterrows():
+    for idx, row in sel_df.iterrows():
         region_start = row["Start"]
         region_end = row["End"]
         ax = axs[idx]
@@ -219,13 +216,14 @@ def plot_manhattan(preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YR
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('data', type=str, help='Path to dataset')
-    parser.add_argument('model', type=str, help='Path to model')
+    parser.add_argument('--data', type=str, help='Path to dataset')
+    parser.add_argument('--model', type=str, help='Path to model')
     parser.add_argument('--save_features', type=str, help='Path for saving features')
     parser.add_argument('--save_logits', type=str, help='Path for saving logits')
     parser.add_argument('--logits_path', type=str, help='Path for loading logits')
     parser.add_argument('--plot_preds', type=str, help='Path to save the Manhattan plot')
     parser.add_argument('--smooth_window', type=int, default=7, help='Smoothing window size')
+    parser.add_argument('--subsample', type=int, default=None, help='Subsample size for collator')
 
     args = parser.parse_args()
 
@@ -235,7 +233,7 @@ if __name__ == "__main__":
 
     if args.save_logits or args.save_features:
         preds_path = args.save_logits
-        sweep(data, model, args.save_logits, args.save_features)
+        sweep(data, model, args.save_logits, args.save_features, subsample=args.subsample)
     
     if args.plot_preds:
         preds_path = args.logits_path if args.logits_path else preds_path
