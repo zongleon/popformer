@@ -26,20 +26,42 @@ def get_windowed_reich(windows):
 
     # we'll compute the max of column "X" for each window
     reichx = []
-    for chrom, start, end in tqdm(windows):
-        window_df = df.loc[(chrom, slice(start, end)), :]
-        if window_df.empty:
-            reichx.append(0)
-            continue
-        reich_stat = window_df["X"].mean()
-        reichx.append(reich_stat)
+    # Group windows by chromosome for efficiency
+    windows_by_chrom = {}
+    for chrom, start, end in windows:
+        if chrom not in windows_by_chrom:
+            windows_by_chrom[chrom] = []
+        windows_by_chrom[chrom].append((start, end))
+    
+    for chrom in tqdm(sorted(windows_by_chrom.keys())):
+        sub_df = df.loc[chrom]
+        for start, end in windows_by_chrom[chrom]:
+            window_df = sub_df.loc[slice(start, end), :]
+            if window_df.empty:
+                reichx.append(0)
+            else:
+                # compute max absolute value of "X" in the window
+                # only for snps that have s > 0
+                window_df = window_df[window_df["S"] > 0]
+                if window_df.empty:
+                    reichx.append(0)
+                else:
+                    reich_stat = window_df["X"].abs().max()
+                    reichx.append(reich_stat)
+    # for chrom, start, end in tqdm(windows):
+    #     window_df = df.loc[(chrom, slice(start, end)), :]
+    #     if window_df.empty:
+    #         reichx.append(0)
+    #         continue
+    #     reich_stat = window_df["X"].mean()
+    #     reichx.append(reich_stat)
 
     assert len(reichx) == len(windows)
     reichx = np.array(reichx)
     return reichx
 
-def get_windowed_grossman(windows):
-    df = pd.read_csv("SEL/sel.csv")
+def get_windowed_grossman(windows, df="SEL/sel.csv"):
+    df = pd.read_csv(df)
     df = df[df["Population"] == "CEU"]
     # convert "chr1", etc
     df["Chromosome"] = df["Chromosome"].apply(lambda x: int(x.replace("chr", "")))
@@ -99,17 +121,30 @@ if __name__ == "__main__":
     # mask = preds["chrom"]
     mask = np.ones_like(preds["chrom"], dtype=bool)
     windows = get_windows(preds, mask)
-    reichx = get_windowed_reich(windows)
+    # reichx = get_windowed_reich(windows)
+    reichx = get_windowed_grossman(windows, "SEL/reichsel.csv")
     grossman = get_windowed_grossman(windows)
 
-    print(f"Got {len(windows)} windows.")
+    print(f"Got {len(windows)} windows:")
+    print(f"Reich X sig counts: {reichx.sum()} / {len(reichx)}")
+    print(f"Grossman sig counts: {grossman.sum()} / {len(grossman)}")
 
-    def to_probs(x):
-        x = torch.tensor(x)
-        return torch.softmax(x, dim=1).numpy()[:, 1]
+    # def to_probs(x):
+    #     x = torch.tensor(x)
+    #     return torch.softmax(x, dim=1).numpy()[:, 1]
 
-    preds = to_probs(preds["preds"])
-    reich_x_sig_mask = reichx >= 4.5
+    def window_smooth(x, window=5):
+        kernel = np.ones(window) / window
+        smooth_x = np.convolve(x, kernel, mode='same')
+            
+        return smooth_x
+
+    # preds = to_probs(preds["preds"])
+    preds = preds["preds"][:, 1]
+    preds = window_smooth(preds, window=5)
+
+    # reich_x_sig_mask = reichx >= 5.45
+    reich_x_sig_mask = reichx == 1
     grossman_sig_mask = grossman == 1
     sig_mask = grossman_sig_mask
 
@@ -118,8 +153,8 @@ if __name__ == "__main__":
 
     # print(preds_sig.shape, preds_nonsig.shape)
 
-    region_shift_test(preds, grossman_sig_mask, M=10000, roll=True)
-    region_shift_test(preds, reich_x_sig_mask)
+    region_shift_test(preds, reich_x_sig_mask, M=10000, roll=False)
+    region_shift_test(preds, grossman_sig_mask, M=10000, roll=False)
 
     # res = spearmanr(preds, reichx)
 

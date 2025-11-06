@@ -22,11 +22,13 @@ def sweep(dataset, model, save_preds_path=None, save_features_path=None, subsamp
     model.to(device)
     model.eval()
 
-    collator = HaploSimpleDataCollator(subsample=(subsample, subsample) if subsample else None)
+    collator = HaploSimpleDataCollator(subsample=(subsample, subsample) if subsample else None,
+                                       subsample_type="diverse")
 
     loader = DataLoader(
         data,
-        batch_size=1,
+        batch_size=4,
+        num_workers=4,
         collate_fn=collator,
     )
     preds = []
@@ -214,6 +216,37 @@ def plot_manhattan(preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YR
     plt.close(fig)
 
 
+def plot_region(preds_path, out_fig_path, window=0, label_df=None):
+    data = np.load(preds_path)
+    # preds = torch.softmax(torch.tensor(data["preds"]), dim=-1)[:, 1].numpy()
+    preds = data["preds"][:, 1]
+    ylbl = "pred. probability of selection"
+    
+    start_pos = data["start_pos"]
+    end_pos = data["end_pos"]
+
+    # Smooth predictions by averaging over surrounding predictions
+
+    if isinstance(window, int) and window > 1:
+        kernel = np.ones(window, dtype=float) / window
+        preds = np.convolve(preds, kernel, mode="same")
+
+    plt.figure(figsize=(12, 6), layout="constrained")
+    plt.scatter(start_pos, preds, alpha=0.8)
+
+    if label_df is not None:
+        for _, r in label_df.iterrows():
+            x0 = r["start"]
+            x1 = r["end"]
+            plt.axvspan(x0, x1, color="purple", alpha=0.4)
+        plt.legend(["Predictions", "Selection region"])
+
+    plt.xlabel('Position (bp)')
+    plt.ylabel(ylbl)
+    plt.grid(True, alpha=0.3, linestyle='--')
+    plt.ticklabel_format(style='plain', axis='x', scilimits=(0,0))
+    plt.savefig(out_fig_path, dpi=300)
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', type=str, help='Path to dataset')
@@ -222,6 +255,8 @@ if __name__ == "__main__":
     parser.add_argument('--save_logits', type=str, help='Path for saving logits')
     parser.add_argument('--logits_path', type=str, help='Path for loading logits')
     parser.add_argument('--plot_preds', type=str, help='Path to save the Manhattan plot')
+    parser.add_argument('--plot_region', type=str, help='Path to save the region plot')
+    parser.add_argument('--region_labels', type=str, help='CSV file with region labels for region plot')
     parser.add_argument('--smooth_window', type=int, default=7, help='Smoothing window size')
     parser.add_argument('--subsample', type=int, default=None, help='Subsample size for collator')
 
@@ -240,3 +275,11 @@ if __name__ == "__main__":
         if not os.path.exists(preds_path):
             raise ValueError(f"Predictions path {preds_path} does not exist. Run with --save_logits first or specify with --logits_path.")
         plot_manhattan(preds_path, args.plot_preds, populations=("CEU",), window=args.smooth_window)
+    
+    if args.plot_region:
+        preds_path = args.logits_path if args.logits_path else preds_path
+        if not os.path.exists(preds_path):
+            raise ValueError(f"Predictions path {preds_path} does not exist. Run with --save_logits first or specify with --logits_path.")
+        # Load selection regions
+        sel_df = pd.read_csv(args.region_labels)
+        plot_region(preds_path, args.plot_region, window=args.smooth_window, label_df=sel_df)

@@ -188,11 +188,11 @@ if __name__ == "__main__":
         dataset.save_to_disk(f"IMP/KHV.chr20.64.{global_vars.NUM_SNPS}")
 
     elif mode == "fasternn":
-        global_vars.NUM_SNPS = 512
+        global_vars.NUM_SNPS = 128
         split = "test"
         def gen():
-            samples = np.load(f"FASTER_NN/fasternn_{split}_regions_50000.npy")
-            distances = np.load(f"FASTER_NN/fasternn_{split}_distances_50000.npy")
+            samples = np.load(f"FASTER_NN/fasternn_{split}_regions_512snps.npy")
+            distances = np.load(f"FASTER_NN/fasternn_{split}_distances_512snps.npy")
             labels = pd.read_csv(f"FASTER_NN/fasternn_{split}_meta.csv")["label"].values
             for sample, distance in zip(samples, distances):
                 region = np.dstack(
@@ -203,7 +203,7 @@ if __name__ == "__main__":
 
         # Save tokenized data
         dataset = Dataset.from_generator(gen, features=make_features(label_dtype="int8", label_resolution="window"))
-        dataset.save_to_disk(f"FASTER_NN/tokenized_{split}_50000")
+        dataset.save_to_disk(f"FASTER_NN/tokenized_{split}_512snps")
     elif mode == "runsel":
         which = sys.argv[2]
         allsamples: np.ndarray = np.load(
@@ -213,34 +213,51 @@ if __name__ == "__main__":
             f"1000g/{which}/distances.npy", mmap_mode="r"
         )
         df = pd.read_csv(f"1000g/{which}/metadata.csv", memory_map=True)
-        global_vars.NUM_SNPS = 512
+        global_vars.NUM_SNPS = 128
 
         def gen():
-            # sel = df["coeff"].to_numpy(dtype=np.float16)
-            sel = df["coeff"].to_numpy()
-            sel = (sel > 0).astype(int)
+            sel = df["coeff"].to_numpy(dtype=np.float16)
+            for _ in range(20):
+                for i, (sample, dist, s) in enumerate(zip(allsamples, alldistances, sel)):
+                    # only nonzero
+                    first, last = find_nonzero_block_cols(sample)
+                    sample = sample[:, first:last]
+                    dist = dist[first:last]
+                    positions = np.cumsum(dist)
 
-            for i, (sample, dist, s) in enumerate(zip(allsamples, alldistances, sel)):
-                # only nonzero
-                first, last = find_nonzero_block_cols(sample)
-                sample = sample[:, first:last]
-                dist = dist[first:last]
+                    # tqdm.write(f"{sample.shape}, dist {dist.shape}, pos {positions.shape}")
 
-                sample = np.dstack(
-                    [sample, dist[None, :].repeat(sample.shape[0], axis=0)]
-                )
-                region, distances = tokenizer(sample)
+                    # pick 64 snps
+                    length = sample.shape[1]
+                    start_idx = np.random.randint(0, max(1, length - 64))
+                    end_idx = min(start_idx + np.random.randint(16, 128), length - 1)
+                    # end_idx = min(start_idx + 64, length - 1)
+                    sample = sample[:, start_idx:end_idx]
+                    dist = dist[start_idx:end_idx]
 
-                yield {
-                    "input_ids": region,
-                    "distances": distances,
-                    "label": s,
-                }
+                    # if position 25000 is not included,
+                    # sel should be 0
+                    # tqdm.write(f"Sample {i}: pos {positions[start_idx]}-{positions[end_idx]}, s={s}")
+                    if not (positions[start_idx] <= 125000 <= positions[end_idx]):
+                        s = 0
 
-        features = make_features(label_dtype="float16", label_resolution="window")
+                    sample = np.dstack(
+                        [sample, dist[None, :].repeat(sample.shape[0], axis=0)]
+                    )
+                    region, distances = tokenizer(sample)
+
+                    yield {
+                        "input_ids": region,
+                        "distances": distances,
+                        "label": 1 if s > 0 else 0,
+                        "s": s,
+                    }
+
+        features = make_features(label_dtype="int8", label_resolution="window",
+                                 include_s=True)
 
         dataset = Dataset.from_generator(gen, features=features)
-        dataset.save_to_disk(f"dataset/selbin_{which}")
+        dataset.save_to_disk(f"dataset/selbin_{which}_snps/")
     elif mode == "runsel_bigregion":
         rng = np.random.default_rng()
         def gen(fpath: str, mpath: str):
@@ -258,10 +275,11 @@ if __name__ == "__main__":
 
             last_pos = int(cum_pos[-1])
             start_bp = 0
-            for _ in range(5000):
+            for _ in range(10000):
                 start_bp = np.random.randint(0, last_pos - 64)
                 start_idx = int(np.searchsorted(cum_pos, start_bp, side="left"))
                 length = rng.integers(low=16, high=64)
+                # length = 64
                 end_idx = min(start_idx + length, gt_matrix.shape[1])
                 end_bp = cum_pos[end_idx - 1]
                 # tqdm.write(f"Sampling window {start_bp}-{end_bp} (idx {start_idx}-{end_idx})")
@@ -300,4 +318,4 @@ if __name__ == "__main__":
                                                       "1000g/regiontest/ghist_const6.out"),
                                           features=features)
         dataset = concatenate_datasets([dataset, dataset2])
-        dataset.save_to_disk("dataset/selbin_bigregion")
+        dataset.save_to_disk("dataset/selbin_bigregion_snps")

@@ -50,7 +50,7 @@ def plot_combine(preds_path: str, output: str):
         start_pos = data["start_pos"]
 
         # Smooth predictions by averaging over surrounding predictions
-        window = 5
+        window = 1
         smooth_preds = np.zeros_like(preds)
         for i in range(len(preds)):
             left = max(0, i - window // 2)
@@ -100,7 +100,7 @@ def plot_combine(preds_path: str, output: str):
         ax.grid(True, alpha=0.3, linestyle='--')
         ax.ticklabel_format(style='plain', axis='x', scilimits=(0,0))
 
-    plt.savefig(output.format(t="smooth"), dpi=300)
+    plt.savefig(output.format(t="combine"), dpi=300)
 
     
 if __name__ == "__main__":

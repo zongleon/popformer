@@ -14,7 +14,7 @@ MAX = 5000
 
 FILE = "{pop}_{typ}{seed}.trees"
 MAX_HAPS = 256
-MAX_SNPS = 512
+MAX_SNPS = 2048
 
 def main(d, out):
     # paths
@@ -38,7 +38,7 @@ def main(d, out):
     neutral_df = pd.concat([neutral_df, pd.DataFrame(neutrals, columns=df.columns[-4:])], axis=1)
     df = pd.concat([df, neutral_df])
     df["sim"] = "Sept25"
-    df["pop"] = "pan_2"
+    df["pop"] = "pan_4"
     
     # store results
     matrices = np.zeros((total, MAX_HAPS, MAX_SNPS))
@@ -59,6 +59,7 @@ def main(d, out):
             # process tree        
             ts = tskit.load(filename)
             gt_matrix = ts.genotype_matrix()
+            pbar.write(f"Processing {filename}: {gt_matrix.shape[0]} SNPs")
             num_snps = min(gt_matrix.shape[0], MAX_SNPS)
             num_haps = gt_matrix.shape[1]
             dist_vec = get_dist_vec(ts)[:num_snps]
@@ -87,8 +88,7 @@ def get_dist_vec(ts):
     positions = [round(variant.site.position) for variant in ts.variants()]
     snps_total = len(positions)
     
-    dist_vec = [0] + [(positions[j+1] - positions[j])/ \
-              global_vars.L for j in range(snps_total-1)]
+    dist_vec = [0] + [(positions[j+1] - positions[j]) for j in range(snps_total-1)]
     return np.array(dist_vec)
 
 

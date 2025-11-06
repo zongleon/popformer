@@ -78,10 +78,11 @@ def make_features(
     include_pop: bool = False,
     include_pos: bool = False,
     include_snp_pos: bool = False,
+    include_s: bool = False,
 ):
     features = {
         "input_ids": Array2D((MAX_HAPS, global_vars.NUM_SNPS + 2), "int8"),
-        "distances": List(Value("float32")),
+        "distances": List(Value("float16")),
     }
     if include_pop:
         features["pop"] = Value(dtype="string")
@@ -92,6 +93,8 @@ def make_features(
     if include_snp_pos:
         features["positions"] = List(Value(dtype="int32"))
         features["chrom"] = Value("int8")
+    if include_s:
+        features["s"] = Value("float16")
 
     if label_dtype is not None:
         if label_resolution == "window":
@@ -130,7 +133,7 @@ def parse_hdf5_random(filepath: str, args) -> tuple[Generator, Features]:
         # use pg gan iterator to get regions
         it = get_iterator(filepath, args.bed_file, args.seed)
         for _ in range(args.n_samples):
-            sample = it.real_region(neg1=False, region_len=True)
+            sample = it.real_region(neg1=False, region_len=args.region_len)
             region, distance = tokenizer(sample)
             yield {
                 "input_ids": region,
@@ -160,7 +163,7 @@ def parse_hdf5_inorder(filepath: str, args) -> tuple[Generator, Features]:
                 i = i + args.window_jump
 
                 region = it.real_region(
-                    neg1=False, region_len=True, start_idx=pos, return_pos=True
+                    neg1=False, region_len=args.region_len, start_idx=pos, return_pos=True
                 )
                 if region == "end_chrom":
                     break
@@ -251,7 +254,7 @@ def parse_trees_inorder(filepath: str, args) -> tuple[Generator, Features]:
         last_pos = int(cum_pos[-1])
         start_bp = 0
         while start_bp <= last_pos:
-            end_bp = start_bp + args.window_size
+            end_bp = start_bp + args.window_jump
             start_idx = int(np.searchsorted(cum_pos, start_bp, side="left"))
             end_idx = int(np.searchsorted(cum_pos, end_bp, side="left"))
 
@@ -262,18 +265,19 @@ def parse_trees_inorder(filepath: str, args) -> tuple[Generator, Features]:
 
             dist = d[None, :].repeat(m.shape[0], axis=0)
             region = np.dstack([m, dist])
-            sample = tokenizer(region)
+            region, distances = tokenizer(region)
 
             yield {
-                "input_ids": sample[..., 0],
-                "distances": sample[0, :, 1],
+                "input_ids": region,
+                "distances": distances,
                 "chrom": 0,
                 "positions": p,
+                "pop": filepath,
             }
 
             start_bp = start_bp + args.window_jump
 
-    features = make_features(include_snp_pos=True)
+    features = make_features(include_snp_pos=True, include_pop=True)
     return gen, features
 
 def parse_trees(filepath: str, args) -> tuple[Generator, Features]:
@@ -335,6 +339,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--shuffle", action="store_true", help="Whether to shuffle samples"
+    )
+    parser.add_argument(
+        "--region_len", action="store_true", help="Set to use region length rather than n snps."
     )
     parser.add_argument(
         "--seed", type=int, default=None, help="Random seed"

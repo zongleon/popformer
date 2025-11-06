@@ -23,6 +23,7 @@ class HaploSimpleDataCollator:
     oversample_ones = False
     pad_batch = False
     label_dtype: torch.dtype = None
+    subsample_type: str = "random"
 
     def __init__(
         self,
@@ -33,16 +34,86 @@ class HaploSimpleDataCollator:
         oversample_ones = False,
         pad_batch=True,
         label_dtype=None,
+        subsample_type: str = "random",
     ):
         if subsample is not None and subsample[0] > subsample[1]:
             raise ValueError("subsample[0] must be <= subsample[1]")
         self.subsample = subsample
         self.mlm_probability = mlm_probability
+        self.subsample_type = subsample_type
         self.whole_snp_mask_probability = whole_snp_mask_probability
         self.span_mask_probability = span_mask_probability
         self.oversample_ones = oversample_ones
         self.pad_batch = pad_batch
         self.label_dtype = label_dtype
+
+    def _hamming_dist_all(self, A_bool, row_bool):
+        """Compute Hamming distance from each row of A_bool to row_bool."""
+        # A_bool, row_bool are boolean arrays
+        return torch.count_nonzero(A_bool != row_bool, dim=1)
+
+    def select_diverse_rows(
+        self,
+        X: torch.Tensor,
+        k: int,
+        seed: int | None = None,
+    ):
+        """
+        Select k row indices from a binary matrix X (shape: [n, m]) to maximize diversity
+        using greedy farthest-first traversal w.r.t. Hamming distance (max-min criterion).
+
+        - Picks a random start row.
+        - Repeatedly adds the row that maximizes the minimum Hamming distance to the selected set.
+
+        Args:
+            X: Binary matrix (values in {0,1}); shape (n, m). dtype can be bool or int.
+            k: Number of rows to select; 1 <= k <= n.
+            seed: Optional random seed for reproducibility.
+
+        Returns:
+            np.ndarray of shape (k,) with selected row indices in selection order.
+
+        Complexity:
+            O(k * n * m) time, O(n) extra memory.
+        """
+        n, m = X.shape
+        # Convert to boolean for fast XOR/compare
+        Xb = X.bool()
+        
+        rng = torch.Generator()
+        if seed is not None:
+            rng.manual_seed(seed)
+        selected = []
+
+        # Start with a random row
+        first = torch.randint(0, n, (1,), generator=rng).item()
+        selected.append(first)
+
+        # Track which rows remain candidates
+        candidate_mask = torch.ones(n, dtype=torch.bool)
+        candidate_mask[first] = False
+
+        # min_dists[i] = min Hamming distance from row i to any selected row
+        min_dists = self._hamming_dist_all(Xb, Xb[first]).to(torch.long)
+
+        while len(selected) < k:
+            # Consider only candidates; pick one with max min-distance (random tie-break)
+            candidate_indices = torch.nonzero(candidate_mask, as_tuple=False).squeeze()
+            if candidate_indices.numel() == 0:
+                break  # nothing left to pick
+            cand_dists = min_dists[candidate_indices]
+            max_val = cand_dists.max()
+            # Random tie-break among equals
+            tied = candidate_indices[cand_dists == max_val]
+            choice = int(tied[torch.randint(0, len(tied), (1,), generator=rng)])
+            selected.append(choice)
+            candidate_mask[choice] = False
+
+            # Update min distances with the newly selected row
+            d_new = self._hamming_dist_all(Xb, Xb[choice])
+            torch.minimum(min_dists, d_new, out=min_dists)
+
+        return torch.tensor(selected, dtype=torch.long)
 
     def _torch_mask_tokens(self, inputs):
         """
@@ -149,9 +220,17 @@ class HaploSimpleDataCollator:
             if n_non_pad == subs:
                 selected = non_pad_indices
             elif n_non_pad > subs:
-                selected = non_pad_indices[
-                    torch.randperm(n_non_pad)[: subs]
-                ]
+                if self.subsample_type == "diverse":
+                    selected = self.select_diverse_rows(
+                        input_ids[non_pad_indices, :max_len],
+                        subs,
+                        seed=idx,
+                    )
+                    selected = non_pad_indices[selected]
+                elif self.subsample_type == "random":
+                    selected = non_pad_indices[
+                        torch.randperm(n_non_pad)[: subs]
+                    ]
             else:
                 raise RuntimeError(
                     f"Not enough non-padded haplotypes ({len(non_pad_indices)}) to subsample {self.subsample}"
