@@ -1,0 +1,24 @@
+[project]
+name = "popformer"
+version = "0.1.0"
+description = "Transformer models for haplotype matrices"
+authors = [{ name = "Leon Zong" }]
+license = { text = "MIT" }
+requires-python = ">=3.9"
+
+dependencies = [
+    "torch",
+    "transformers",
+    "datasets",
+    "pandas"
+]
+
+[project.optional-dependencies]
+dev = ["wandb"]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["popformer"]

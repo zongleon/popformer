@@ -1,16 +1,10 @@
 __pycache__
+*.egg-info
 
-dataset*/
-GHIST/
-LAI/
-SEL/
-FASTER_NN/
-1000g/
-IMP/
-ANC/
+build/
+data/
 models/
-tokenizer/
-outs/
+preds/
 figs/
 
 *.pth

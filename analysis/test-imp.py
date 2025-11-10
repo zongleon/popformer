@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader
-from models import PopformerForMaskedLM
-from collators import HaploSimpleDataCollator
+from popformer.models import PopformerForMaskedLM
+from popformer.collators import HaploSimpleDataCollator
 from datasets import load_from_disk
 from tqdm import tqdm
 import matplotlib.pyplot as plt
@@ -239,8 +239,8 @@ def compute_metrics(preds_path, dataset, labels_path):
     for i in range(10):
         true = labels["genotypes"].iloc[i]
         pred = pred_labels[:, i, :2].argmax(axis=-1).astype(str).tolist()
-        print(f"True: {"".join([str(t) for t in true])}")
-        print(f"Pred: {"".join(pred)}") #, Prob: {pred_labels[0, i, pred]:.4f}")
+        print(f"True: {''.join([str(t) for t in true])}")
+        print(f"Pred: {''.join(pred)}") #, Prob: {pred_labels[0, i, pred]:.4f}")
 
     # preprocess true labels
     true = labels["genotypes"].apply(lambda x: [int(c) for c in x]).tolist()

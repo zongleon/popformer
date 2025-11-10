@@ -1,5 +1,5 @@
 import torch
-from models import PopformerForSNPClassification, PopformerForWindowClassification
+from popformer.models import PopformerForSNPClassification, PopformerForWindowClassification
 from transformers import TrainingArguments, Trainer
 from datasets import load_from_disk
 from sklearn.metrics import (
@@ -10,7 +10,7 @@ from sklearn.metrics import (
     r2_score,
     confusion_matrix,
 )
-from collators import HaploSimpleDataCollator
+from popformer.collators import HaploSimpleDataCollator
 import argparse
 
 parser = argparse.ArgumentParser(description="finetune")

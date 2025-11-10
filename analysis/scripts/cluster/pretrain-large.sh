@@ -7,12 +7,13 @@
 #SBATCH --cpus-per-task=4               # Number of CPU cores per task
 #SBATCH --mem=32G                       # Memory allocation
 #SBATCH --gpus=4
-#SBATCH --time=08:00:00                  # Maximum runtime (hh:mm:ss)
+#SBATCH --time=12:00:00                  # Maximum runtime (hh:mm:ss)
 
 torchrun --nproc_per_node=4 train.py \
-    --dataset_path ./dataset/pt_snpwindow_tkns \
+    --configuration popformer-large \
+    --dataset_path ./data/dataset/pt_tokenized \
     --mlm_probability 0.7 \
-    --num_epochs 10 \
+    --num_epochs 5 \
     --batch_size 4 \
     --output_path ./models/pt \
     --learning_rate 1.5e-4

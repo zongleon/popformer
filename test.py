@@ -3,9 +3,9 @@ import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 import numpy as np
 import torch
-from models import PopformerForMaskedLM, PopformerForWindowClassification
+from popformer.models import PopformerForMaskedLM, PopformerForWindowClassification
 from datasets import load_from_disk
-from collators import HaploSimpleDataCollator
+from popformer.collators import HaploSimpleDataCollator
 from scipy.spatial.distance import cdist
 from sklearn.utils.class_weight import compute_class_weight
 from tqdm import tqdm

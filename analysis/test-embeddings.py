@@ -1,11 +1,16 @@
+"""
+Generate, store, and visualize embeddings from pre-trained popformer models.
+Do the populations separate?
+"""
+
 from cyvcf2 import VCF
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
 import torch
-from models import PopformerForMaskedLM
+from popformer.models import PopformerForMaskedLM
 from datasets import load_from_disk
-from collators import HaploSimpleDataCollator
+from popformer.collators import HaploSimpleDataCollator
 from sklearn.decomposition import PCA
 import matplotlib.pyplot as plt
 import umap

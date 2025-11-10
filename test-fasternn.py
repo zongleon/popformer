@@ -2,8 +2,8 @@ import sys
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from models import PopformerForWindowClassification
-from collators import HaploSimpleDataCollator
+from popformer.models import PopformerForWindowClassification
+from popformer.collators import HaploSimpleDataCollator
 from datasets import load_from_disk
 from tqdm import tqdm
 import matplotlib.pyplot as plt

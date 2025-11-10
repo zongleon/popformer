@@ -12,7 +12,6 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
     roc_auc_score,
-    RocCurveDisplay,
 )
 from sklearn.utils import shuffle
 import seaborn as sns

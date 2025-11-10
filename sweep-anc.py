@@ -2,8 +2,8 @@ from time import sleep
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from models import PopformerForSNPClassification
-from collators import HaploSimpleDataCollator
+from popformer.models import PopformerForSNPClassification
+from popformer.collators import HaploSimpleDataCollator
 from datasets import load_from_disk
 from tqdm import tqdm
 import matplotlib.pyplot as plt
