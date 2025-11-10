@@ -1,5 +1,5 @@
 import torch
-from models import HapbertaForColumnClassification, HapbertaForSequenceClassification
+from models import PopformerForSNPClassification, PopformerForWindowClassification
 from transformers import TrainingArguments, Trainer
 from datasets import load_from_disk
 from sklearn.metrics import (
@@ -45,7 +45,7 @@ MODE = args.mode
 dataset_path = args.dataset_path
 output_path = args.output_path
 
-model = HapbertaForSequenceClassification
+model = PopformerForWindowClassification
 if MODE == "realsim":
     num_labels = 2
     typ = torch.long
@@ -61,7 +61,7 @@ elif MODE == "pop":
 elif MODE == "ancientx":
     num_labels = 1
     typ = torch.float16
-    model = HapbertaForColumnClassification
+    model = PopformerForSNPClassification
 else:
     raise ValueError("Unknown mode selected")
 

@@ -14,6 +14,7 @@ from sklearn.metrics import (
     roc_auc_score,
     RocCurveDisplay,
 )
+from pulearn import ElkanotoPuClassifier, BaggingPuClassifier
 from sklearn.utils import shuffle
 import seaborn as sns
 
@@ -32,7 +33,6 @@ test_data = [
     "len200_ghist_const1",
     "len200_ghist_const2",
 ]
-train_data = ["pan_4_snps", "bigregion_snps"]
 MAX = None
 
 
@@ -85,6 +85,8 @@ def evaluate_on_test(
     has_dataset = "dataset" in metadata.columns
 
     binary_preds = np.argmax(preds, axis=1)
+    # convert -1s to 0s for accuracy calculation
+    binary_preds = np.where(binary_preds == -1, 0, binary_preds)
 
     if has_label:
         overall_acc = accuracy_score(metadata[label_column].values, binary_preds)
@@ -184,32 +186,6 @@ def plot_region(
     plt.savefig(outfig, dpi=300)
 
 
-def grid_search_C(
-    X_tr: np.ndarray,
-    y_tr: np.ndarray,
-    X_ev: np.ndarray,
-    y_ev: np.ndarray,
-) -> float:
-    C_grid = np.logspace(-4, 4, 16)
-    best_C = None
-    best_acc = -1.0
-    # print(f"Grid searching C in [{C_grid[0]}, {C_grid[-1]}] with {len(C_grid)} points")
-
-    for C in C_grid:
-        clf = LogisticRegression(random_state=0, C=C, max_iter=1000)
-        clf.fit(X_tr, y_tr)
-        ev_pred = clf.predict_proba(X_ev)[:, 1]
-        acc = average_precision_score(y_ev, ev_pred)
-        print(f"C={C:.4g} score={acc:.4f}")
-
-        if acc > best_acc:
-            best_acc = acc
-            best_C = C
-
-    print(f"Selected C={best_C} (eval accuracy={best_acc:.4f})")
-    return float(best_C)
-
-
 def save_predictions_npz(input_npz_path: str, preds: np.ndarray, out_path: str) -> None:
     # Pass through all arrays except 'features', add 'preds'
     with np.load(input_npz_path, allow_pickle=False) as npz:
@@ -223,123 +199,121 @@ def experiment():
     results = []
     inorders = []
 
+    train_set = "pureal-pan_4"
+
     for model in models:
-        for train_set in train_data:
-            print(f"\n=== Model: {model}, Train set: {train_set} ===")
-            train_features = load_features(f"dataset/features/{train_set}_{model}.npz")
-            train_labels = load_labels(f"dataset/{train_set}/", label_column="label")
+        simulated_features = load_features(f"dataset/features/pan_4_snps_{model}.npz")
+        simulated_labels = load_labels(
+            "dataset/pan_4_snps/", label_column="label"
+        )
+        positive_mask = simulated_labels == 1
+        real_features = load_features(f"dataset/features/genome_CEU_{model}.npz")
+        real_labels = np.full(real_features.shape[0], -1, dtype=int)
 
-            # split training dataset
-            train_features = shuffle(train_features, random_state=0, n_samples=MAX)
-            train_labels = shuffle(train_labels, random_state=0, n_samples=MAX)
-            X_tr, X_test, y_tr, y_test = train_test_split(
-                train_features,
-                train_labels,
-                random_state=0,
-                test_size=0.2,
-                stratify=train_labels,
+        train_features = np.concatenate(
+            [simulated_features[positive_mask], real_features], axis=0
+        )
+        train_labels = np.concatenate(
+            [simulated_labels[positive_mask], real_labels], axis=0
+        )
+
+        # split training dataset
+        train_features = shuffle(train_features, random_state=0, n_samples=MAX)
+        train_labels = shuffle(train_labels, random_state=0, n_samples=MAX)
+        X_tr, X_test, y_tr, y_test = train_test_split(
+            train_features,
+            train_labels,
+            random_state=0,
+            test_size=0.2,
+            stratify=train_labels,
+        )
+        best_C = 1
+
+        classifier = LogisticRegression(
+            random_state=0, C=best_C, max_iter=1000
+        )
+        classifier = ElkanotoPuClassifier(classifier, hold_out_ratio=0.5, random_state=0)
+        # classifier = BaggingPuClassifier(classifier, n_estimators=15, random_state=0)
+        classifier.fit(X_tr, y_tr)
+
+        # evaluate on test set
+        y_test = np.where(y_test == -1, 0, y_test)
+        res = evaluate_on_test(
+            classifier.predict_proba(X_test),
+            y_test,
+        )
+        pretty_print_results(res)
+
+        for test_set in test_data:
+            test_features = load_features(
+                f"dataset/features/{test_set}_{model}.npz"
             )
-            X_train, X_ev, y_train, y_ev = train_test_split(
-                X_tr,
-                y_tr,
-                random_state=0,
-                test_size=0.2,
-                stratify=y_tr,
-            )
+            if "fasternn" in test_set:
+                test_metadata = load_metadata(f"FASTER_NN/{test_set}_test_meta.csv")
+            elif "const" in test_set:
+                sels = pd.read_csv(f"1000g/regiontest/{test_set}.csv")
+                t = np.load(f"dataset/features/{test_set}_{model}.npz")
+                starts, ends = t["start_pos"], t["end_pos"]
+                labels = []
+                for start, end in zip(starts, ends):
+                    # label is 1 if the window overlaps with a selected region
+                    sel_region = sels[
+                        (sels["start"] <= end) & (sels["start"] >= start)
+                    ]
+                    if len(sel_region) > 0:
+                        sel_label = 1
+                    else:
+                        sel_label = 0
+                    labels.append(sel_label)
+                test_metadata = pd.DataFrame({"label": labels})
+            else:
+                try:
+                    test_labels = load_labels(
+                        f"dataset/{test_set}/", label_column="label"
+                    )
+                    test_metadata = pd.DataFrame({"label": test_labels})
+                except ValueError:
+                    test_metadata = None
 
-            # best_C = grid_search_C(
-            #     X_train, y_train, X_ev, y_ev
-            # )
-            best_C = 10000
+            test_preds = classifier.predict_proba(test_features)
 
-            classifier = LogisticRegression(
-                random_state=0, C=best_C, max_iter=1000
-            )
-            classifier.fit(X_tr, y_tr)
-
-            # evaluate on test set
-            res = evaluate_on_test(
-                classifier.predict_proba(X_test),
-                y_test,
-            )
-            pretty_print_results(res)
-
-            for test_set in test_data:
-                test_features = load_features(
-                    f"dataset/features/{test_set}_{model}.npz"
+            if "inorder" in test_set:
+                inorders.append(
+                    {
+                        "model": model,
+                        "trainset": train_set,
+                        "testset": test_set,
+                        "preds": test_preds,
+                    }
                 )
-                if "fasternn" in test_set:
-                    test_metadata = load_metadata(f"FASTER_NN/{test_set}_test_meta.csv")
-                elif "const" in test_set:
-                    sels = pd.read_csv(f"1000g/regiontest/{test_set}.csv")
-                    t = np.load(f"dataset/features/{test_set}_{model}.npz")
-                    starts, ends = t["start_pos"], t["end_pos"]
-                    labels = []
-                    for start, end in zip(starts, ends):
-                        # label is 1 if the window overlaps with a selected region
-                        sel_region = sels[
-                            (sels["start"] <= end) & (sels["start"] >= start)
-                        ]
-                        if len(sel_region) > 0:
-                            sel_label = 1
-                        else:
-                            sel_label = 0
-                        labels.append(sel_label)
-                    test_metadata = pd.DataFrame({"label": labels})
-                else:
-                    try:
-                        test_labels = load_labels(
-                            f"dataset/{test_set}/", label_column="label"
-                        )
-                        test_metadata = pd.DataFrame({"label": test_labels})
-                    except ValueError:
-                        test_metadata = None
 
-                test_preds = classifier.predict_proba(test_features)
+            if test_metadata is not None:
+                res = evaluate_on_test(
+                    test_preds,
+                    test_metadata,
+                    label_column="label",
+                    trainset=train_set,
+                    model=model,
+                    testset=test_set,
+                )
+                display = PrecisionRecallDisplay.from_predictions(
+                    test_metadata["label"].values,
+                    test_preds[:, 1],
+                    name=f"{model}_{train_set}",
+                    plot_chance_level=True,
+                    despine=True,
+                )
+                res.update({"prc_curve": display})
+                # res.update({"roc_curve": roc_display})
+                res.update({"preds": test_preds})
+                results.append(res)
 
-                if "inorder" in test_set:
-                    inorders.append(
-                        {
-                            "model": model,
-                            "trainset": train_set,
-                            "testset": test_set,
-                            "preds": test_preds,
-                        }
-                    )
-
-                if test_metadata is not None:
-                    res = evaluate_on_test(
-                        test_preds,
-                        test_metadata,
-                        label_column="label",
-                        trainset=train_set,
-                        model=model,
-                        testset=test_set,
-                    )
-                    display = PrecisionRecallDisplay.from_predictions(
-                        test_metadata["label"].values,
-                        test_preds[:, 1],
-                        name=f"{model}_{train_set}",
-                        plot_chance_level=True,
-                        despine=True,
-                    )
-                    # ROC curve display
-                    # roc_display = RocCurveDisplay.from_predictions(
-                    #     test_metadata["label"].values,
-                    #     test_preds[:, 1],
-                    #     name=f"{model}_{train_set}",
-                    # )
-                    res.update({"prc": display})
-                    # res.update({"roc_curve": roc_display})
-                    res.update({"preds": test_preds})
-                    results.append(res)
-
-                if "ghist" in test_set or "genome" in test_set:
-                    save_predictions_npz(
-                        f"dataset/features/{test_set}_{model}.npz",
-                        test_preds,
-                        f"outs/{test_set}_{model}_{train_set}.npz",
-                    )
+            if "ghist" in test_set or "genome" in test_set:
+                save_predictions_npz(
+                    f"dataset/features/{test_set}_{model}.npz",
+                    test_preds,
+                    f"outs/pu_{test_set}_{model}_{train_set}.npz",
+                )
 
     # Print summary tables
     df = pd.DataFrame(results)
@@ -348,35 +322,26 @@ def experiment():
         if dft["accuracy"].notnull().any():
             print(f"\nSummary for test set: {test_set}")
             print("-" * 40)
-            print(dft[[column for column in dft.columns if column != "preds" and column != "prc" and column != "roc_curve"]].to_string(index=False))
+            print(dft[[column for column in dft.columns if column != "preds" and column != "prc_curve" and column != "roc_curve"]].to_string(index=False))
 
         # plot prc curves
-        if dft["prc"].notnull().any():
+        if dft["prc_curve"].notnull().any():
             fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
             chance_level_plotted = False
             for row in results:
                 if row["testset"] != test_set:
                     continue
-                prc = row["prc"]
-                if prc is not None:
-                    prc.plot(ax=ax, plot_chance_level=not chance_level_plotted)
+                prc_curve = row["prc_curve"]
+                if prc_curve is not None:
+                    prc_curve.plot(ax=ax, plot_chance_level=not chance_level_plotted)
                     chance_level_plotted = True
             ax.set_title(f"Precision-Recall Curve: {test_set}")
-            plt.savefig(f"figs/lp_prc_{test_set}.png", dpi=300)
+            plt.savefig(f"figs/lppu_prc_{test_set}.png", dpi=300)
             plt.close()
 
         if test_set == "pan_4_snps":
             s = np.asarray(datasets.load_from_disk("dataset/pan_4_snps")["s"])
             lbls = load_labels("dataset/pan_4_snps/", label_column="label")
-
-            # plot the distribution of s
-            fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
-            sns.histplot(s[s > 0], bins=50, kde=False, ax=ax)
-            ax.set_xlabel("Selection coefficient s")
-            ax.set_ylabel("Count")
-            ax.grid(True, axis="y", alpha=0.3, linestyle="--")
-            plt.savefig("figs/lp_s_dist.png", dpi=300)
-            plt.close()
 
             # accuracy vs s bins per model
             bin_labels = ["s=0", "(0,0.02]", "(0.02,0.04]", "(0.04,0.06]", "(0.06,0.08]", "(0.08,0.1]"]
@@ -414,37 +379,22 @@ def experiment():
             ax.set_xlabel("s bin")
             ax.set_ylabel("Accuracy")
             ax.grid(True, axis="y", alpha=0.3, linestyle="--")
-            plt.savefig("figs/lp_acc_vs_s.png", dpi=300)
+            plt.savefig("figs/lppu_acc_vs_s.png", dpi=300)
             plt.close()
-
-
-
-
-        # plot roc curves
-        # if dft["roc_curve"].notnull().any():
-        #     fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
-        #     for row in results:
-        #         if row["testset"] != test_set:
-        #             continue
-        #         roc_curve = row.get("roc_curve", None)
-        #         if roc_curve is not None:
-        #             roc_curve.plot(ax=ax)
-        #     ax.set_title(f"ROC Curve: {test_set}")
-        #     plt.savefig(f"figs/lp_roc_curve_{test_set}.png", dpi=300)
-        #     plt.close()
 
     # plot region predictions
     for test_set in test_data[-4:]:
         start_pos = np.load(f"dataset/features/{test_set}_popf-small.npz")["start_pos"]
         end_pos = np.load(f"dataset/features/{test_set}_popf-small.npz")["end_pos"]
         preds = [row["preds"][:, 1] for row in results if row["testset"] == test_set]
+        
         labels = [f"{row['model']} {row['trainset']}" for row in results if row["testset"] == test_set]
         plot_region(
             preds=preds,
             labels=labels,
             start_pos=start_pos,
             end_pos=end_pos,
-            outfig=f"figs/lp_preds_{test_set}.png",
+            outfig=f"figs/lppu_preds_{test_set}.png",
             window=1,
             window_type="mean",
             label_df=pd.read_csv(f"1000g/regiontest/{test_set}.csv")
@@ -452,8 +402,6 @@ def experiment():
         
     df_inorder = pd.DataFrame()
     for inorder in inorders:
-        if inorder["trainset"] != "pan_4_snps":
-            continue
         # each inorder preds has 5 windows
         # plot all 1000 in one figure
         preds = inorder["preds"]
@@ -490,7 +438,7 @@ def experiment():
     ax.set_xlim(-0.05, 4.05)
     ax.set_ylim(0, 1)
     ax.grid(True, axis="y", alpha=0.3, linestyle="--")
-    plt.savefig("figs/lp_inorder.png", dpi=300)
+    plt.savefig("figs/lppu_inorder.png", dpi=300)
         
 
     return 0

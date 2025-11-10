@@ -5,7 +5,7 @@ import os
 import matplotlib.pyplot as plt
 
 sys.path.append(".")
-from dataset import find_nonzero_block_cols
+from popformer.dataset import find_nonzero_block_cols
 
 FILE = "{pop}_{typ}{seed}.trees"
 MAX_HAPS = 256

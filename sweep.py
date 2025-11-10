@@ -3,7 +3,7 @@ import os
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from models import HapbertaForSequenceClassification
+from models import PopformerForWindowClassification
 from collators import HaploSimpleDataCollator
 from datasets import load_from_disk
 from tqdm import tqdm
@@ -13,7 +13,7 @@ import pandas as pd
 def sweep(dataset, model, save_preds_path=None, save_features_path=None, subsample=None):
     data = load_from_disk(dataset)
 
-    model = HapbertaForSequenceClassification.from_pretrained(
+    model = PopformerForWindowClassification.from_pretrained(
         model,
         torch_dtype=torch.float16
     )

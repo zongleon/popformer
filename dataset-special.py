@@ -9,7 +9,7 @@ import pandas as pd
 from tqdm import tqdm
 import tskit
 
-from dataset import find_nonzero_block_cols, get_iterator, get_pos_and_dist_vec, make_features, tokenizer
+from popformer.dataset import find_nonzero_block_cols, get_iterator, get_pos_and_dist_vec, make_features, tokenizer
 from pg_gan import global_vars, util
 
 def parse_ghist_out(path: str):

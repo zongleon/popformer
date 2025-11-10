@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 import numpy as np
 import torch
-from models import HapbertaForMaskedLM, HapbertaForSequenceClassification
+from models import PopformerForMaskedLM, PopformerForWindowClassification
 from datasets import load_from_disk
 from collators import HaploSimpleDataCollator
 from scipy.spatial.distance import cdist
@@ -13,7 +13,7 @@ from tqdm import tqdm
 def test_model():
     print("=" * 30)
     print("Test: Show model")
-    model = HapbertaForSequenceClassification.from_pretrained(
+    model = PopformerForWindowClassification.from_pretrained(
         "./models/hapberta2d_realsim/"
     )
 
@@ -22,7 +22,7 @@ def test_masked_lm(mpath, mlm, snpmlm, spanmlm):
     print("=" * 30)
     print("Test: Masked performance")
     # Load data
-    model = HapbertaForMaskedLM.from_pretrained(
+    model = PopformerForMaskedLM.from_pretrained(
         mpath
     )
 
@@ -236,7 +236,7 @@ def test_selmodel(train=True):
         data = load_from_disk("GHIST/ghist_samples_singlesweep_64")
     data = data.shuffle()
 
-    model = HapbertaForSequenceClassification.from_pretrained(
+    model = PopformerForWindowClassification.from_pretrained(
         "models/ft_sel_bin_long",
         torch_dtype=torch.bfloat16,
         num_labels=2

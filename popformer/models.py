@@ -5,19 +5,14 @@ from transformers import RobertaForSequenceClassification
 from transformers.modeling_outputs import BaseModelOutputWithPoolingAndCrossAttentions
 from transformers.models.roberta.modeling_roberta import RobertaForMaskedLM, RobertaModel
 
-from modules import HapbertaAxialEncoder
+from modules import PopformerEncoder
 
-class HapbertaForMaskedLM(RobertaForMaskedLM):
+class PopformerForMaskedLM(RobertaForMaskedLM):
     """RobertaForMaskedLM that accepts distances in forward pass."""
     def __init__(self, config):
         super().__init__(config)
-        if getattr(config, "axial", False):
-            self.roberta = HapbertaAxialModel(config, add_pooling_layer=False)
+        self.roberta = PopformerModel(config, add_pooling_layer=False)
         self.post_init()
-
-        # lm_head = self.lm_head
-        # print("Bias:", lm_head.decoder.bias)
-        # print("Weight std:", lm_head.decoder.weight.std(dim=1))
 
     def forward(self, input_ids, distances, attention_mask, 
                 labels=None, 
@@ -53,7 +48,7 @@ class HapbertaForMaskedLM(RobertaForMaskedLM):
         }
 
 
-class HapbertaClassificationHead(nn.Module):
+class PopformerClassificationHead(nn.Module):
     """Head for sentence-level classification tasks."""
 
     def __init__(self, config):
@@ -79,15 +74,15 @@ class HapbertaClassificationHead(nn.Module):
         return x
 
 
-class HapbertaForSequenceClassification(RobertaForSequenceClassification):
+class PopformerForWindowClassification(RobertaForSequenceClassification):
     """RobertaForSequenceClassification that accepts distances in forward pass."""
     def __init__(self, config):
         super().__init__(config)
         if getattr(config, "axial", False):
-            self.roberta = HapbertaAxialModel(config, add_pooling_layer=False)
+            self.roberta = PopformerModel(config, add_pooling_layer=False)
 
         # test a simple logistic regression head
-        self.classifier = HapbertaClassificationHead(config)
+        self.classifier = PopformerClassificationHead(config)
         self.post_init()
 
     def forward(self, input_ids=None, distances=None, attention_mask=None, labels=None, 
@@ -129,7 +124,7 @@ class HapbertaForSequenceClassification(RobertaForSequenceClassification):
         }
 
 
-class HapbertaColumnClassificationHead(nn.Module):
+class PopformerSNPClassificationHead(nn.Module):
     """Head for SNP-level classification tasks."""
 
     def __init__(self, config):
@@ -154,15 +149,14 @@ class HapbertaColumnClassificationHead(nn.Module):
         return x
 
 
-class HapbertaForColumnClassification(RobertaForSequenceClassification):
-    """"""
+class PopformerForSNPClassification(RobertaForSequenceClassification):
+    """SNP-level (column-wise) classification model."""
     def __init__(self, config):
         super().__init__(config)
-        if getattr(config, "axial", False):
-            self.roberta = HapbertaAxialModel(config, add_pooling_layer=False)
+        self.roberta = PopformerModel(config, add_pooling_layer=False)
 
         # Use the column-specific head
-        self.classifier = HapbertaColumnClassificationHead(config)
+        self.classifier = PopformerSNPClassificationHead(config)
         self.post_init()
 
     def forward(self, input_ids=None, distances=None, attention_mask=None, labels=None, 
@@ -200,12 +194,16 @@ class HapbertaForColumnClassification(RobertaForSequenceClassification):
         }
 
 
-class HapbertaAxialModel(RobertaModel):
+class PopformerModel(RobertaModel):
+    """
+    Base Popformer model. Subclasses RobertaModel but generally only for the saving/loading logic,
+    basically every module is replaced.
+    """
     def __init__(self, config, add_pooling_layer=True):
         super().__init__(config, add_pooling_layer=add_pooling_layer)
         # remove absolute position embeddings
         self.embeddings.position_embeddings = None
-        self.encoder = HapbertaAxialEncoder(config)
+        self.encoder = PopformerEncoder(config)
 
     def forward(
         self,

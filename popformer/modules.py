@@ -4,10 +4,10 @@ import torch
 import torch.nn as nn
 from transformers.modeling_outputs import BaseModelOutputWithPastAndCrossAttentions
 
-class HapbertaAxialEncoder(nn.Module):
+class PopformerEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.layer = nn.ModuleList([HapbertaAxialLayer(config) for i in range(config.num_hidden_layers)])
+        self.layer = nn.ModuleList([AxialAttentionLayer(config) for i in range(config.num_hidden_layers)])
         self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
     def forward(
         self,
@@ -43,7 +43,7 @@ class HapbertaAxialEncoder(nn.Module):
         )
     
 
-class HapbertaAxialLayer(nn.Module):
+class AxialAttentionLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
         row_attn = RowSelfAttention(
@@ -181,8 +181,6 @@ class RowSelfAttention(nn.Module):
         distances,
         attn_mask: Optional[torch.FloatTensor] = None
     ):
-        num_rows, num_cols, batch_size, embed_dim = x.size()
-        
         scaling = self.align_scaling(x)
         attn_weights = self.compute_attention_weights(
             x, distances, scaling, attn_mask=attn_mask
@@ -193,6 +191,7 @@ class RowSelfAttention(nn.Module):
         return output, attn_probs
 
 # from the msa-transformer repository
+# adjusted to remove attention probes since we don't have a task like that
 class ColumnSelfAttention(nn.Module):
     """Compute self-attention over columns of a 2D input."""
 
@@ -261,8 +260,6 @@ class ColumnSelfAttention(nn.Module):
         self,
         x,
     ):
-        num_rows, num_cols, batch_size, embed_dim = x.size()
-    
         return self.compute_attention_update(
             x,
         )
@@ -281,12 +278,6 @@ class RelativePosAttnBias(nn.Module):
         self.relative_attention_bias = nn.Embedding(
             self.num_buckets, self.num_heads
         )
-        # log_buckets = torch.logspace(
-        #     0,
-        #     math.log10(self.max_distance),
-        #     self.num_buckets - 1
-        # )
-        # buckets = torch.cat([log_buckets])
         lin_buckets = torch.linspace(
             0,
             self.max_distance,

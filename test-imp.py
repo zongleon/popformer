@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader
-from models import HapbertaForMaskedLM
+from models import PopformerForMaskedLM
 from collators import HaploSimpleDataCollator
 from datasets import load_from_disk
 from tqdm import tqdm
@@ -19,7 +19,7 @@ def test_masked_lm(model_path, dataset):
     print("=" * 30)
     print("Test: Masked performance")
     # Load data
-    model = HapbertaForMaskedLM.from_pretrained(
+    model = PopformerForMaskedLM.from_pretrained(
         model_path
     )
 
@@ -89,7 +89,7 @@ def test_masked_lm(model_path, dataset):
 def test(model, dataset, save_preds_path=None):
     data = load_from_disk(dataset)
 
-    model = HapbertaForMaskedLM.from_pretrained(
+    model = PopformerForMaskedLM.from_pretrained(
         model,
         torch_dtype=torch.float16
     )

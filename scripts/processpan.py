@@ -7,7 +7,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 sys.path.append(".")
-from dataset import find_nonzero_block_cols
+from popformer.dataset import find_nonzero_block_cols
 from pg_gan import global_vars
 
 MAX = 5000

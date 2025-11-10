@@ -2,7 +2,7 @@ from time import sleep
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from models import HapbertaForColumnClassification
+from models import PopformerForSNPClassification
 from collators import HaploSimpleDataCollator
 from datasets import load_from_disk
 from tqdm import tqdm
@@ -14,7 +14,7 @@ import requests
 def sweep(dataset, model, save_preds_path=None):
     data = load_from_disk(dataset)
 
-    model = HapbertaForColumnClassification.from_pretrained(
+    model = PopformerForSNPClassification.from_pretrained(
         model,
         torch_dtype=torch.float16
     )
@@ -173,7 +173,7 @@ def test_evens(dataset, model):
     data = load_from_disk(dataset)
     data = data.filter(lambda ex: ex["chrom"] % 2 == 0)
 
-    model = HapbertaForColumnClassification.from_pretrained(
+    model = PopformerForSNPClassification.from_pretrained(
         model,
         torch_dtype=torch.float16
     )

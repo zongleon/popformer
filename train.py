@@ -1,6 +1,6 @@
 from transformers import RobertaConfig
 from transformers import Trainer, TrainingArguments
-from models import HapbertaForMaskedLM
+from models import PopformerForMaskedLM
 from datasets import load_from_disk
 from collators import HaploSimpleDataCollator
 import numpy as np
@@ -45,7 +45,7 @@ config = RobertaConfig(
 )
 
 # Create model for masked LM
-model = HapbertaForMaskedLM(config)
+model = PopformerForMaskedLM(config)
 
 # data collator
 data_collator = HaploSimpleDataCollator(subsample=(32, 128),

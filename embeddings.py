@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 import torch
-from models import HapbertaForMaskedLM
+from models import PopformerForMaskedLM
 from datasets import load_from_disk
 from collators import HaploSimpleDataCollator
 from sklearn.decomposition import PCA
@@ -34,7 +34,7 @@ ds = load_from_disk("SEL/tokenized_ALL.chr1.snps")
 
 collator = HaploSimpleDataCollator(subsample=None)
 
-model = HapbertaForMaskedLM.from_pretrained(
+model = PopformerForMaskedLM.from_pretrained(
     "./models/pt2/",
     torch_dtype=torch.float16
 )
