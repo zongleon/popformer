@@ -15,5 +15,5 @@ torchrun --nproc_per_node=4 analysis/train.py \
     --mlm_probability 0.7 \
     --num_epochs 5 \
     --batch_size 8 \
-    --output_path ./models/pt \
+    --output_path ./models/popf-base \
     --learning_rate 1.5e-4

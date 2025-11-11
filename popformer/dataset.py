@@ -4,13 +4,12 @@ Utilities for generating Huggingface datasets for haplotype windows.
 
 import argparse
 import os
-from collections.abc import Generator
 
 import allel
 import numpy as np
 import tskit
 from datasets import Array2D, Dataset, Features, List, Value, concatenate_datasets
-from real_data_random import RealDataRandomIterator
+from .real_data_random import RealDataRandomIterator
 from tqdm import tqdm
 
 

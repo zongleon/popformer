@@ -10,7 +10,7 @@ Date: 9/27/22
 # python imports
 import h5py
 import numpy as np
-import util
+from . import util
 
 
 class Region:
