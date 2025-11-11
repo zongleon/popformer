@@ -5,7 +5,7 @@ from transformers import RobertaForSequenceClassification
 from transformers.modeling_outputs import BaseModelOutputWithPoolingAndCrossAttentions
 from transformers.models.roberta.modeling_roberta import RobertaForMaskedLM, RobertaModel
 
-from modules import PopformerEncoder
+from .modules import PopformerEncoder
 
 class PopformerForMaskedLM(RobertaForMaskedLM):
     """RobertaForMaskedLM that accepts distances in forward pass."""

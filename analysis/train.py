@@ -54,6 +54,7 @@ eval_dataset = dataset["test"]
 if args.configuration == "popformer-large":
     config = RobertaConfig(
         vocab_size=6,
+        position_embedding_type="none",
         hidden_size=768,
         num_hidden_layers=12,
         num_attention_heads=12,
@@ -62,6 +63,7 @@ if args.configuration == "popformer-large":
 elif args.configuration == "popformer-medium":
     config = RobertaConfig(
         vocab_size=6,
+        position_embedding_type="none",
         hidden_size=512,
         num_hidden_layers=8,
         num_attention_heads=8,
@@ -70,6 +72,7 @@ elif args.configuration == "popformer-medium":
 elif args.configuration == "popformer-base":
     config = RobertaConfig(
         vocab_size=6,
+        position_embedding_type="none",
         hidden_size=512,
         num_hidden_layers=4,
         num_attention_heads=4,

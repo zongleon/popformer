@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=hapberta             # Name of the job
+#SBATCH --job-name=popf-large           # Name of the job
 #SBATCH --output=logs/%x_%j.out         # Stdout goes to logs/jobname_jobid.out
 #SBATCH --error=logs/%x_%j.err          # Stderr goes to logs/jobname_jobid.err
 #SBATCH --partition=dgx-b200	        # Queue to submit to
@@ -9,9 +9,9 @@
 #SBATCH --gpus=4
 #SBATCH --time=12:00:00                  # Maximum runtime (hh:mm:ss)
 
-torchrun --nproc_per_node=4 train.py \
+torchrun --nproc_per_node=4 analysis/train.py \
     --configuration popformer-large \
-    --dataset_path ./data/dataset/pt_tokenized \
+    --dataset_path ./dataset/pt_tokenized \
     --mlm_probability 0.7 \
     --num_epochs 5 \
     --batch_size 4 \
