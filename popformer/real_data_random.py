@@ -269,11 +269,12 @@ class RealDataRandomIterator:
                 (positions[j + 1] - positions[j]) for j in range(len(positions) - 1)
             ]
 
+            # TODO this function call is wrong
             after = util.process_gt_dist(
                 hap_data,
                 dist_vec,
+                num_snps,
                 region_len=region_len,
-                region_len_size=region_len_size,
             )
             if return_all_pos:
                 return after, positions, chrom

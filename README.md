@@ -26,19 +26,19 @@ TODO huggingface
 
 An overview of what is done here.
 
-1. Pre-training models gets us
-    - Embedding figures
-    - Genotype imputation results
-2. Fine-tuning on selection gets us
-    - Test split results (classification metrics)
-    - Simulated sweep detection results (detection metrics of some sort ???)
-      - GHIST and
-      - our own
-    - Real sweep detection results
-      - permutation tests on grossman / reich regions, although the reich regions may be a null result
-3. Linear probes on selection get us
-    - Comparisons between linear probes and fine-tuning
-4. We should also add
-    - Comparisons with other models (maybe, one summary stat and one)
-5. We can additionally add
-    - Real/sim classification models
+- Pre-training models gets us
+  - [x] Embedding figures
+  - [x] Genotype imputation results
+- Fine-tuning on selection gets us
+  - [ ] Test split results (classification metrics)
+  - [ ] Simulated sweep detection results (detection metrics of some sort ???)
+    - [ ] GHIST and
+    - [ ] our own
+  - [ ] Real sweep detection results
+    - [ ] permutation tests on grossman / reich regions, although the reich regions may be a null result
+- Linear probes on selection get us
+  - [ ] Comparisons between linear probes and fine-tuning
+- We should also add
+  - [ ] Comparisons with other models (maybe, one summary stat and one)
+- We can additionally add
+  - [ ] Real/sim classification models

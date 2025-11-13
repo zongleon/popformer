@@ -10,6 +10,7 @@ import numpy as np
 import tskit
 from datasets import Array2D, Dataset, Features, List, Value, concatenate_datasets
 from .real_data_random import RealDataRandomIterator
+from .util import process_gt_dist
 from tqdm import tqdm
 
 
@@ -53,9 +54,12 @@ class Tokenizer:
         zeros_vec = np.zeros((n_haps, 1))
 
         haps = np.hstack([bos_vec, sample[:, :n_snps, 0], eos_vec]).astype(np.int8)
-        dists = np.hstack([zeros_vec, sample[:, :n_snps, 1], zeros_vec]).astype(
-            np.float16
-        )
+        
+        dists = np.hstack([zeros_vec, sample[:, :n_snps, 1], zeros_vec])
+        # max_dist = np.max(np.abs(dists))
+        # print(f"Distances max element: {max_dist}")
+        # print(f"Distances shape: {dists.shape}, dtype: {dists.dtype}")
+        dists = dists.astype(np.float16)
 
         if n_pad_snps > 0:
             pad_vec = np.full((n_haps, n_pad_snps), self.PAD_TOKEN)
@@ -77,6 +81,7 @@ def make_features(
     include_pop: bool = False,
     include_pos: bool = False,
     include_snp_pos: bool = False,
+    include_major_minor: bool = False,
     include_s: bool = False,
 ):
     features = {
@@ -94,6 +99,8 @@ def make_features(
         features["chrom"] = Value("int8")
     if include_s:
         features["s"] = Value("float16")
+    if include_major_minor:
+        features["major_allele_flipped"] = List(Value("bool"))
 
     if label_dtype is not None:
         if label_resolution == "window":
@@ -173,13 +180,14 @@ def hdf5_to_dataset(
                 yield {
                     "input_ids": region,
                     "distances": distance,
-                    "start_pos": s,
-                    "end_pos": e,
-                    "chrom": c,
-                    "pop": filepath,
+                    # "start_pos": s,
+                    # "end_pos": e,
+                    # "chrom": c,
+                    # "pop": filepath,
                 }
 
-    features = make_features(include_pos=True, include_pop=True)
+    # features = make_features(tokenizer, include_pos=True, include_pop=True)
+    features = make_features(tokenizer, include_pos=False, include_pop=False)
     return Dataset.from_generator(gen, features=features)
 
 
@@ -228,6 +236,97 @@ def trees_to_dataset(
     return Dataset.from_generator(gen, features=features)
 
 
+
+def parse_files_imputation(ref_file: str, tgt_file: str, tokenizer: Tokenizer, bed_file = None) -> Dataset:
+    samples_list = []
+    it = RealDataRandomIterator(ref_file, bed_file)
+    it2 = RealDataRandomIterator(tgt_file, bed_file)
+    n_snps = it.num_snps
+    n_snps_tgt = it2.num_snps
+    n_haps_ref = it.num_samples
+    n_haps = it.num_samples + it2.num_samples
+
+    region = positions = None
+
+    snp_ref = snp_tgt = 0
+    while snp_ref < n_snps and snp_tgt < n_snps_tgt:
+        cur_idx = snp_ref % tokenizer.num_snps
+        if cur_idx == 0:
+            if snp_tgt != 0:
+                # save if not first
+                # region = shuffle(region, n)
+                dist_vec = [0] + [
+                    (positions[j + 1] - positions[j])
+                    for j in range(len(positions) - 1)
+                ]
+
+                region, flipped = process_gt_dist(
+                    region, dist_vec, tokenizer.num_snps, region_len=False, ret_major_minor=True
+                )
+
+                region, distances = tokenizer(region)
+
+                samples_list.append(
+                    {
+                        "input_ids": region,
+                        "distances": distances,
+                        "positions": positions,
+                        "chrom": 0, # TODO
+                        "major_allele_flipped": flipped,
+                    }
+                )
+
+            region = np.zeros((tokenizer.num_snps, n_haps))
+            positions = np.zeros((tokenizer.num_snps,))
+        pos_ref = it.pos_all[snp_ref]
+        pos_tgt = it2.pos_all[snp_tgt]
+
+        while pos_ref < pos_tgt and snp_ref < n_snps - 1:
+            # mask the tgt sample at this pos
+            region[cur_idx, n_haps_ref:] = 4
+            region[cur_idx, :n_haps_ref] = it.haps_all[snp_ref, :]
+            positions[cur_idx] = it.pos_all[snp_ref]
+
+            snp_ref += 1
+            cur_idx = snp_ref % tokenizer.num_snps
+            pos_ref = it.pos_all[snp_ref]
+
+        # Check bounds before accessing
+        if snp_ref >= n_snps or snp_tgt >= n_snps_tgt:
+            break
+
+        region[cur_idx, n_haps_ref:] = it2.haps_all[snp_tgt, :]
+        region[cur_idx, :n_haps_ref] = it.haps_all[snp_ref, :]
+        positions[cur_idx] = it.pos_all[snp_ref]
+
+        snp_ref += 1
+        snp_tgt += 1
+
+    # Handle the last region if it wasn't saved
+    if region is not None and positions is not None:
+        dist_vec = [0] + [
+            (positions[j + 1] - positions[j])
+            for j in range(len(positions) - 1)
+        ]
+        region, flipped = process_gt_dist(
+            region, dist_vec, tokenizer.num_snps, region_len=False, ret_major_minor=True
+        )
+        region, distances = tokenizer(region)
+        samples_list.append(
+            {
+                "input_ids": region,
+                "distances": distances,
+                "positions": positions,
+                "chrom": 0, # TODO
+                "major_allele_flipped": flipped,
+            }
+        )
+
+    features = make_features(tokenizer, include_snp_pos=True, include_major_minor=True)
+    # Save tokenized data
+    dataset = Dataset.from_list(samples_list, features=features)
+    return dataset
+
 def parse_file(filepath, args) -> Dataset:
     if os.path.isdir(filepath):
         return None
@@ -239,10 +338,11 @@ def parse_file(filepath, args) -> Dataset:
         ext = ".h5"
         filepath = newfile
 
+    tokenizer = Tokenizer(max_haps=args.max_haps, num_snps=args.num_snps)
     if ext == ".h5":
-        return hdf5_to_dataset(filepath, args)
+        return hdf5_to_dataset(filepath, tokenizer, args.window_jump, args.window_size, chrom=args.chrom, bed_file=args.bed_file)
     elif ext == ".trees":
-        return trees_to_dataset(filepath, args, args.window_jump, args.window_size)
+        return trees_to_dataset(filepath, tokenizer, args.window_jump, args.window_size)
     else:
         # non-.vcf, .h5 filetype
         return None
@@ -274,6 +374,7 @@ if __name__ == "__main__":
         help="Chromosome to process. Default is all human autosomes (1-22).",
     )
     parser.add_argument("--num_snps", type=int, default=512, help="Number of SNPs.")
+    parser.add_argument("--max_haps", type=int, default=256, help="Maximum haplotypes.")
     parser.add_argument(
         "--window_jump", type=int, default=50000, help="Distance between windows."
     )

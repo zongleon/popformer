@@ -11,7 +11,7 @@ import numpy as np
 
 
 def process_gt_dist(
-    gt_matrix, dist_vec, num_snps, region_len=False
+    gt_matrix, dist_vec, num_snps, region_len=False, ret_major_minor=False
 ):
     """
     Take in a genotype matrix and vector of inter-SNP distances. Return a 3D
@@ -42,8 +42,8 @@ def process_gt_dist(
 
     # enough SNPs, take middle portion
     if mid >= half_S:
-        minor = major_minor(
-            gt_matrix[mid - half_S : mid + other_half_S, :].transpose()
+        minor, flipped = major_minor(
+            gt_matrix[mid - half_S : mid + other_half_S, :].transpose(),
         )
         region[:, :, 0] = minor
         distances = np.vstack(
@@ -53,22 +53,30 @@ def process_gt_dist(
 
     # not enough SNPs, need to center-pad
     else:
-        minor = major_minor(gt_matrix.T)
+        minor, flipped = major_minor(gt_matrix.T)
         region[:, half_S - mid : half_S - mid + num_SNPs, 0] = minor
         distances = np.vstack([np.copy(dist_vec) for k in range(n)])
         region[:, half_S - mid : half_S - mid + num_SNPs, 1] = distances
 
+    if ret_major_minor:
+        return region, flipped  # n X SNPs X 2
+    
     return region  # n X SNPs X 2
 
 
 def major_minor(matrix):
     """Note that matrix.shape[1] may not be S if we don't have enough SNPs"""
     n = matrix.shape[0]
+    flipped = np.zeros(matrix.shape[1], dtype=bool)
     for j in range(matrix.shape[1]):
-        if np.count_nonzero(matrix[:, j] > 0) > (n / 2):  # count the 1's
-            matrix[:, j] = 1 - matrix[:, j]
+        if np.count_nonzero(matrix[:, j] == 1) > np.count_nonzero(matrix[:, j] == 0):  # count the 1's
+            # then we should flip 0s and 1s
+            # accounting for the fact that there may be missing data (e.g., 2)
+            matrix[:, j][matrix[:, j] <= 1] = 1 - matrix[:, j][matrix[:, j] <= 1]
 
-    return matrix
+            flipped[j] = True
+
+    return matrix, flipped
 
 
 def parse_chrom(chrom):

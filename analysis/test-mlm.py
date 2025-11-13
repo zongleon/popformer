@@ -9,6 +9,8 @@ from popformer.collators import HaploSimpleDataCollator
 from scipy.spatial.distance import cdist
 from sklearn.utils.class_weight import compute_class_weight
 from tqdm import tqdm
+import seaborn as sns
+import pandas as pd
 
 def test_model():
     print("=" * 30)
@@ -18,23 +20,9 @@ def test_model():
     )
 
     print(model)
-def test_masked_lm(mpath, mlm, snpmlm, spanmlm):
+def test_masked_lm(inputs, model):
     print("=" * 30)
     print("Test: Masked performance")
-    # Load data
-    model = PopformerForMaskedLM.from_pretrained(
-        mpath
-    )
-
-    ds = load_from_disk("dataset4/pt_snpwindow_tkns")
-    collator = HaploSimpleDataCollator(subsample=32, 
-                                       mlm_probability=mlm,
-                                       whole_snp_mask_probability=snpmlm,
-                                       span_mask_probability=spanmlm)
-
-    # make a batch
-    inputs = collator([ds[0]])
-
     # print(inputs)
 
     # print masked haps and unmask token
@@ -99,18 +87,14 @@ def test_masked_lm(mpath, mlm, snpmlm, spanmlm):
     ax2.imshow(color(gt_img[0]), aspect='auto', cmap='Greys', interpolation="none")
     ax2.set_title("ground truth")
 
-    plt.savefig("figs/ex_maskedrecreation_new.png", dpi=300, bbox_inches="tight")
+    plt.savefig("figs/ex_testmlm.png", dpi=300, bbox_inches="tight")
+
+    return (lbls == predlbls).mean()
 
 
-def test_baseline():
+def test_baseline(inputs):
     print("=" * 30)
     print("Test: Baseline column frequency approach")
-    
-    # Load data
-    ds = load_from_disk("dataset4/pt_snpwindow_tkns")
-    collator = HaploSimpleDataCollator(mlm_probability=0.15, span_mask_probability=0.15)
-    
-    inputs = collator([ds[0]])
     haps = inputs["input_ids"].numpy()
     
     print("Example input haps:")
@@ -146,16 +130,12 @@ def test_baseline():
     print("Counts of baseline predicted tokens:")
     print({i: (pred_lbls == i).sum() for i in range(7)})
 
+    return (lbls == pred_lbls).mean()
 
-def test_baseline2():
+
+def test_baseline2(inputs):
     print("=" * 30)
     print("Test: Baseline nearest neighbor approach")
-    
-    # Load data
-    ds = load_from_disk("dataset4/pt_snpwindow_tkns")
-    collator = HaploSimpleDataCollator(mlm_probability=0.15, span_mask_probability=0.15)
-    
-    inputs = collator([ds[0]])
     haps = inputs["input_ids"].numpy()
     
     print("Example input haps:")
@@ -196,6 +176,8 @@ def test_baseline2():
     print({i: (lbls == i).sum() for i in range(7)})
     print("Counts of baseline predicted tokens:")
     print({i: (pred_lbls == i).sum() for i in range(7)})
+
+    return (lbls == pred_lbls).mean()
 
 def test_distance():
     # Embedding table for relative position biases
@@ -282,12 +264,47 @@ def test_selmodel(train=True):
     plt.savefig("figs/preds_histogram.png", dpi=300, bbox_inches="tight")
 
 if __name__ == "__main__":
-    # test_model()
-    test_baseline()
-    test_baseline2()
-    test_masked_lm("models/pt", 0.15, 0., 0.15)
+    mlm = 0.75
+    snpmlm = 0.
+    spanmlm = 0.
+
+    # Load data
+    model = PopformerForMaskedLM.from_pretrained(
+        "models/old/popf-small"
+    )
+
+    ds = load_from_disk("data/dataset/pt_tokenized")
+    collator = HaploSimpleDataCollator(subsample=(64, 64), 
+                                       mlm_probability=mlm,
+                                       whole_snp_mask_probability=snpmlm,
+                                       span_mask_probability=spanmlm)
+
+    tups = []
+    for window in range(50):
+        # make a batch
+        inputs = collator([ds[window]])
+        acc_col_baseline = test_baseline(inputs)
+        acc_nn_baseline = test_baseline2(inputs)
+        acc_model = test_masked_lm(inputs, model)
+        tups.append((acc_col_baseline, acc_nn_baseline, acc_model))
+
+    df = pd.DataFrame(tups, columns=["col_baseline", "nn_baseline", "model"])
+
+    plt.figure(figsize=(8, 6))
+    sns.barplot(
+        data=df.melt(var_name="method", value_name="accuracy"),
+        x="method",
+        y="accuracy",
+        hue="method",
+        ci="sd",
+    )
+
+    plt.savefig("figs/mlm_accuracies.png", dpi=300, bbox_inches="tight")
+
+    # also print as table
+    df.melt(var_name="method", value_name="accuracy").groupby("method").agg(["mean", "std"]).to_csv("mlm_accuracies.csv")
+
     # test_realsim_ft()
     # test_selmodel(False)
-
     # test_distance()
 
