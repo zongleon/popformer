@@ -9,7 +9,7 @@
 #SBATCH --gpus=4
 #SBATCH --time=12:00:00                  # Maximum runtime (hh:mm:ss)
 
-torchrun --nproc_per_node=4 analysis/train.py \
+torchrun --nproc_per_node=4 analysis/train/train.py \
     --configuration popformer-base \
     --dataset_path ./dataset/pt_tokenized \
     --mlm_probability 0.7 \

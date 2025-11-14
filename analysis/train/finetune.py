@@ -24,19 +24,14 @@ parser.add_argument(
     "--num_epochs", type=int, default=5, help="Number of training epochs"
 )
 parser.add_argument(
-    "--batch_size", type=int, default=4, help="Batch size for training and evaluation"
+    "--batch_size", type=int, default=16, help="Batch size for training and evaluation"
 )
 parser.add_argument(
     "--output_path", type=str, default="", help="Output path for model checkpoints"
 )
 parser.add_argument("--learning_rate", type=float, default=1e-4, help="Learning rate")
 parser.add_argument(
-    "--from_init", action="store_true", help="Whether to train from scratch"
-)
-parser.add_argument(
-    "--lp",
-    action="store_true",
-    help="Freeze transformer blocks, only train linear head.",
+    "--freeze_layers_up_to", type=int, default=0, help="Number of layers to freeze from the bottom"
 )
 
 args = parser.parse_args()
@@ -92,29 +87,28 @@ if MODE == "pop":
 # eval_dataset = dataset["test"]
 
 # test_dataset = dataset["test"].take(512)
-dataset = dataset.train_test_split(0.01, shuffle=True)
+dataset = dataset.train_test_split(0.1, shuffle=True)
 train_dataset = dataset["train"]
 eval_dataset = dataset["test"]
+print(f"Labels distribution in train: {train_dataset['label'].count(0)}, {train_dataset['label'].count(1)}")
+print(f"Labels distribution in eval: {eval_dataset['label'].count(0)}, {eval_dataset['label'].count(1)}")
 # eval_dataset = test_dataset
 
-if args.from_init:
-    model = model.from_pretrained("./models/lp_selbin3", torch_dtype=torch.bfloat16)
-else:
-    model = model.from_pretrained(
-        "./models/pt2",
-        classifier_dropout=0,
-        num_labels=num_labels,
-        torch_dtype=torch.bfloat16,
-    )
-
-
-if args.lp:
-    # Freeze all layers except classification head
-    for name, param in model.named_parameters():
-        if "classifier" not in name:
+model = model.from_pretrained(
+    "./models/old/popf-small",
+    classifier_dropout=0,
+    num_labels=num_labels,
+    torch_dtype=torch.bfloat16,
+)
+if args.freeze_layers_up_to > 0:
+    for param in model.roberta.embeddings.parameters():
+        param.requires_grad = False
+    for i in range(args.freeze_layers_up_to):
+        # freeze from the bottom
+        for param in model.roberta.encoder.layer[i].parameters():
             param.requires_grad = False
 
-collator = HaploSimpleDataCollator(subsample=(32, 64), label_dtype=typ)
+collator = HaploSimpleDataCollator(subsample=(32, 128), label_dtype=typ)
 
 # training arguments
 training_args = TrainingArguments(
@@ -188,6 +182,3 @@ trainer.train()
 
 # Save model and tokenizer
 trainer.save_model(output_path)
-
-print("Test metrics:")
-print(trainer.evaluate(test_dataset))
