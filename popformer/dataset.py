@@ -42,6 +42,10 @@ class Tokenizer:
         }
 
     def tokenizer(self, sample: np.ndarray) -> np.ndarray:
+        # TODO investigate
+        # hacky fix
+        sample[:, :, 0][sample[:, :, 0] == 2] = 1
+
         # padding
         n_haps = min(sample.shape[0], self.max_haps)
         n_snps = min(sample.shape[1], self.num_snps)
@@ -232,7 +236,7 @@ def trees_to_dataset(
 
             start_bp = start_bp + window_jump
 
-    features = make_features(include_snp_pos=True, include_pop=True)
+    features = make_features(tokenizer, include_snp_pos=True, include_pop=True)
     return Dataset.from_generator(gen, features=features)
 
 

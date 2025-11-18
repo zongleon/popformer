@@ -3,11 +3,12 @@ __pycache__
 
 build/
 data/
-models/
+/models/
 preds/
 figs/
 impute5/
 
+*.pt
 *.pth
 *.pdf
 *.out

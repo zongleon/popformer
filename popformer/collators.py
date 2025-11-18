@@ -1,6 +1,71 @@
 import torch
 
 
+class RawMatrixCollator:
+    """
+    simple collator that:
+      - finds the single BOS and EOS columns,
+      - returns columns strictly between them,
+      - removes any all-pad rows,
+      - trims distances and attention_mask to the same column range.
+    
+    Returns lists of per-example tensors (no padding across the batch).
+    """
+    bos_token_id = 2
+    eos_token_id = 3
+    pad_token_id = 5
+
+    def __call__(self, examples):
+        batch_inputs = []
+        batch_dists = []
+        batch_attns = []
+        batch_labels = []
+
+        for ex in examples:
+            x = torch.as_tensor(ex["input_ids"], dtype=torch.long)  # (n_haps, n_cols)
+
+            # Find BOS/EOS column indices (guaranteed single columns)
+            
+            bos_idx = torch.any(x == self.bos_token_id, dim=0).nonzero(as_tuple=False).squeeze()
+            eos_idx = torch.any(x == self.eos_token_id, dim=0).nonzero(as_tuple=False).squeeze()
+            start = int(bos_idx.item()) + 1
+            end = int(eos_idx.item())  # exclusive
+
+            # Trim SNP columns strictly between BOS and EOS
+            x = x[:, start:end]
+
+            # Remove rows that are entirely PAD
+            keep_rows = ~(x == self.pad_token_id).all(dim=1)
+            x = x[keep_rows]
+            batch_inputs.append(x)
+
+            # Trim distances if present (assumed 1D over SNP columns)
+            if "distances" in ex:
+                d = torch.as_tensor(ex["distances"])
+                d = d[start:end]
+                batch_dists.append(d)
+
+            # Trim attention_mask if present (either [n_cols] or [n_cols, n_cols])
+            if "attention_mask" in ex and ex["attention_mask"] is not None:
+                am = torch.as_tensor(ex["attention_mask"])
+                if am.dim() == 2 and am.shape[0] == am.shape[1]:
+                    am = am[start:end, start:end]
+                else:
+                    am = am[start:end]
+                batch_attns.append(am)
+
+            if "label" in ex:
+                batch_labels.append(ex["label"])
+
+        out = {"input_ids": batch_inputs,
+               "distances": batch_dists,
+               "attention_mask": batch_attns,
+               "labels": batch_labels
+               }
+        
+        return out
+
+
 class HaploSimpleDataCollator:
     """
     Data collator for axial attention models.

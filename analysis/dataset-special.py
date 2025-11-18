@@ -129,7 +129,7 @@ if __name__ == "__main__":
             f"data/matrices/{which}/distances.npy", mmap_mode="r"
         )
         df = pd.read_csv(f"data/matrices/{which}/metadata.csv")
-        tokenizer = Tokenizer(max_haps=256, num_snps=128)
+        tokenizer = Tokenizer(max_haps=256, num_snps=512)
 
         def gen(samps, dists, meta, times=1, force_s=False):
             sel = meta["coeff"].to_numpy(dtype=np.float16)
@@ -145,20 +145,21 @@ if __name__ == "__main__":
                     found = False
                     while not found:
                         length = sample.shape[1]
-                        start_idx = np.random.randint(0, max(1, length - 64))
+                        region_len = np.random.randint(32, 512)
+                        start_idx = np.random.randint(0, max(1, length - region_len - 1))
                         end_idx = min(
-                            start_idx + np.random.randint(16, 128), length - 1
+                            start_idx + region_len, length - 1
                         )
                         # end_idx = min(start_idx + 64, length - 1)
                         sample = sample[:, start_idx:end_idx]
                         dist = dist[start_idx:end_idx]
 
-                        # if position 125000 is not included,
+                        # if position 125000 is not in the middle 50% of the window,
                         # sel should be 0
                         # tqdm.write(f"Sample {i}: pos {positions[start_idx]}-{positions[end_idx]}, s={s}")
                         if s == 0:
                             found = True
-                        if (positions[start_idx] <= 125000 <= positions[end_idx]):
+                        if positions[start_idx] <= 125000 <= positions[end_idx]:
                             if force_s:
                                 found = True
                         else:
@@ -185,42 +186,51 @@ if __name__ == "__main__":
             label_resolution="window",
             include_s=True,
         )
+        # out of 1000 total, 800 can be used for training
+
         neutrals = df["coeff"] == 0
-        neutral_dataset = Dataset.from_generator(
-            lambda: gen(
-                allsamples[neutrals],
-                alldistances[neutrals],
-                df[neutrals],
-                times=5,
-                force_s=False,
-            ),
-            features=features,
-        )
         selections = df["coeff"] > 0
-        selected_dataset = Dataset.from_generator(
-            lambda: gen(
-                allsamples[selections],
-                alldistances[selections],
-                df[selections],
-                times=10,
-                force_s=True,
-            ),
-            features=features,
-        )
-        shoulders_dataset = Dataset.from_generator(
-            lambda: gen(
-                allsamples[selections],
-                alldistances[selections],
-                df[selections],
-                times=5,
-                force_s=False,
-            ),
-            features=features,
-        )
-        dataset = concatenate_datasets(
-            [neutral_dataset, selected_dataset, shoulders_dataset]
-        )
-        dataset.save_to_disk(f"data/dataset/{which}/")
+        train_samples = list(range(800))
+        test_samples = list(range(800, 1000))
+
+        for split, name in zip(
+            [train_samples, test_samples],
+            ["train", "test"],
+        ):
+            neutral_dataset = Dataset.from_generator(
+                lambda: gen(
+                    allsamples[neutrals][split],
+                    alldistances[neutrals][split],
+                    df[neutrals].iloc[split],
+                    times=1,
+                    force_s=False,
+                ),
+                features=features,
+            )
+            selected_dataset = Dataset.from_generator(
+                lambda: gen(
+                    allsamples[selections][split],
+                    alldistances[selections][split],
+                    df[selections].iloc[split],
+                    times=1,
+                    force_s=True,
+                ),
+                features=features,
+            )
+            shoulders_dataset = Dataset.from_generator(
+                lambda: gen(
+                    allsamples[selections][split],
+                    alldistances[selections][split],
+                    df[selections].iloc[split],
+                    times=3,
+                    force_s=False,
+                ),
+                features=features,
+            )
+            dataset = concatenate_datasets(
+                [neutral_dataset, selected_dataset, shoulders_dataset]
+            )
+            dataset.save_to_disk(f"data/dataset/{which}_{name}/")
     elif mode == "runsel_bigregion":
         rng = np.random.default_rng()
 

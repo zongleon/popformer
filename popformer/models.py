@@ -64,6 +64,7 @@ class PopformerClassificationHead(nn.Module):
     def forward(self, features, **kwargs):
         # x = features[:, 0, 0, :]  # take <s> token (equiv. to [CLS])
         x = features.mean(dim=(1, 2)) # take mean across haps, snps
+        # x = features[:, :, 0, :].mean(dim=1)  # mean across haplotypes at bos SNP token
         x = self.layer_norm(x)
         # x = features[:, 0, :].mean(dim=1) # take mean across [CLS] token
         x = self.dropout(x)
