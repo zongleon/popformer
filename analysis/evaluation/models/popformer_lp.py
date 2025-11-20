@@ -1,6 +1,6 @@
 from ..core import BaseModel
 import torch
-from popformer.models import PopformerForWindowClassification
+from popformer.models import PopformerForMaskedLM
 from popformer.collators import HaploSimpleDataCollator
 import pickle
 from sklearn.linear_model import LogisticRegression
@@ -18,7 +18,7 @@ class PopformerLPModel(BaseModel):
         subsample = None,
         subsample_type = "diverse",
     ):
-        self.model = PopformerForWindowClassification.from_pretrained(
+        self.model = PopformerForMaskedLM.from_pretrained(
             model_path, torch_dtype=torch.float16
         )
         self.model_name = model_name
@@ -43,18 +43,16 @@ class PopformerLPModel(BaseModel):
     def preprocess(self, batch):
         # collator
         batch = self.collator(batch)
-
-        # Move tensors to device
-        for k, v in batch.items():
-            if isinstance(v, torch.Tensor):
-                batch[k] = v.to(self.device, non_blocking=True)
-
         return batch
 
 
     def run(self, batch):
         """Make predictions on the given batch of data."""
-        # collator
+        # Move tensors to device
+        for k, v in batch.items():
+            if isinstance(v, torch.Tensor):
+                batch[k] = v.to(self.device, non_blocking=True)
+
         output = self.model(
             batch["input_ids"],
             batch["distances"],

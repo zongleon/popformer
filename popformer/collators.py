@@ -28,9 +28,19 @@ class RawMatrixCollator:
             
             bos_idx = torch.any(x == self.bos_token_id, dim=0).nonzero(as_tuple=False).squeeze()
             eos_idx = torch.any(x == self.eos_token_id, dim=0).nonzero(as_tuple=False).squeeze()
+            # if bos_idx.numel() != 1 or eos_idx.numel() != 1:
+            #     import numpy as np
+            #     np.savetxt("debug_matrix.txt", x.numpy(), fmt="%d")
+            #     raise ValueError(f"Expected single BOS/EOS columns, got {bos_idx.numel()} BOS and {eos_idx.numel()} EOS for example {ex}")
             start = int(bos_idx.item()) + 1
             end = int(eos_idx.item())  # exclusive
 
+            # print(f"Trimming columns from {x.shape[1]} to [{start}, {end})")
+            # if start >= end:
+            #     import numpy as np
+            #     np.savetxt("debug_matrix.txt", x.numpy(), fmt="%d")
+            #     raise ValueError(f"BOS index {start-1} >= EOS index {end} for example {ex}")
+            
             # Trim SNP columns strictly between BOS and EOS
             x = x[:, start:end]
 
@@ -257,7 +267,8 @@ class HaploSimpleDataCollator:
             for ex in examples
         )
         if self.subsample is not None:
-            subs = torch.randint(self.subsample[0], min(self.subsample[1], max_n_non_pad) + 1, (1,)).item()
+            subs = torch.randint(self.subsample[0], self.subsample[1] + 1, (1,)).item()
+            subs = min(subs, max_n_non_pad)
         else:
             subs = max_n_non_pad
 

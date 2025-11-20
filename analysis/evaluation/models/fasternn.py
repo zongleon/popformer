@@ -1,12 +1,12 @@
 """
 This might one day contain code reproducing FASTER-NN.
-unfortunately the original code is difficult to work with.
 
-TODO unfinished
+It does! Mostly correct, hopefully.
 """
 
 from math import floor
 from ..core import BaseModel
+from tqdm import tqdm
 import torch
 
 from popformer.collators import RawMatrixCollator
@@ -131,18 +131,23 @@ class FasterNNModel(BaseModel):
     """
 
     def __init__(
-        self, model_path: str, model_name: str, device: torch.device | None = None
+        self, model_path: str, model_name: str, device: torch.device | None = None, from_init: bool = False
     ):
         if not model_path.endswith(".pt"):  
             model_path += ".pt"
         self.model_path = model_path
         self.model_name = model_name
         # 2 channels = -x ("use base pair distance")
-        self.model = SweepNet1DDet(H=128, W=512, outputs=1, channels=2)
+        self.width = 512
+
+        self.model = SweepNet1DDet(H=128, W=self.width, outputs=1, channels=2)
+        if not from_init:
+            self.model.load_state_dict(torch.load(self.model_path))
+
         if device is None:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.device = device
-        self.model.to(device)
+        self.model.to(self.device)
 
         self.collator = RawMatrixCollator()
 
@@ -154,11 +159,6 @@ class FasterNNModel(BaseModel):
         """
         batch = self.collator(batch)
 
-        # Move tensors to device
-        for k, v in batch.items():
-            if isinstance(v, torch.Tensor):
-                batch[k] = v.to(self.device, non_blocking=True)
-
         inputs = []
 
         # batch contains input_ids, distances
@@ -169,34 +169,36 @@ class FasterNNModel(BaseModel):
 
             combined = torch.stack([mafs, dist], dim=0)
             
-            # pad with 0s to self.width = 512
-            if combined.shape[1] < 512:
-                pad_width = 512 - combined.shape[1]
+            # pad with 0s to self.width
+            if combined.shape[1] < self.width:
+                pad_width = self.width - combined.shape[1]
                 padding = torch.zeros((2, pad_width), dtype=combined.dtype)
                 combined = torch.cat([combined, padding], dim=1)
             else:
-                combined = combined[:, :512]
+                combined = combined[:, :self.width]
 
             inputs.append(combined.unsqueeze(0))  # add batch dim
 
-        batch["inputs"] = torch.cat(inputs, dim=0).to(self.device) # shape (batch_size, 2, num_snps)
+        batch["inputs"] = torch.cat(inputs, dim=0) # shape (batch_size, 2, num_snps)
+        batch["labels"] = torch.tensor([ex for ex in batch["labels"]])
             
         return batch
 
 
-    def train(self, train_loader, val_loader, epochs: int = 10, lr: float = 1e-4):
-        """Train the model. Match Faster-NN training loop.
-        Dataloaders should provide inputs of shape TODO.
-
-        """
+    def train(self, train_loader, val_loader, epochs: int = 10, lr: float = 1e-4, patience: int = 5):
+        """Train the model with early stopping based on val_loss."""
         loss_fn = torch.nn.CrossEntropyLoss()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr, weight_decay=0)
+
+        best_val_loss = float("inf")
+        best_state_dict = None
+        epochs_no_improve = 0
 
         for epoch in range(epochs):
             self.model.train()
             train_loss = 0.0
             train_correct = 0
-            for batch in train_loader:
+            for batch in tqdm(train_loader):
                 inputs = batch["inputs"].to(self.device)
                 labels = batch["labels"].to(self.device)
 
@@ -215,7 +217,7 @@ class FasterNNModel(BaseModel):
             self.model.eval()
             val_loss = 0.0
             val_correct = 0
-            for batch in val_loader:
+            for batch in tqdm(val_loader):
                 inputs = batch["inputs"].to(self.device)
                 labels = batch["labels"].to(self.device)
 
@@ -233,13 +235,33 @@ class FasterNNModel(BaseModel):
                 f"Val Loss: {avg_val_loss:.4f}, Val Acc: {val_accuracy:.4f}"
             )
 
+            # Early stopping check
+            if avg_val_loss < best_val_loss:
+                best_val_loss = avg_val_loss
+                best_state_dict = self.model.state_dict()
+                epochs_no_improve = 0
+            else:
+                epochs_no_improve += 1
+                if epochs_no_improve >= patience:
+                    print(f"Early stopping at epoch {epoch + 1}")
+                    break
+
         # save best model
-        torch.save(self.model.state_dict(), self.model_path)
+        if best_state_dict is not None:
+            torch.save(best_state_dict, self.model_path)
+        else:
+            torch.save(self.model.state_dict(), self.model_path)
         print(f"Model saved to {self.model_path}")
 
     def run(self, batch):
         """Make predictions on the given batch of data."""
+        for k, v in batch.items():
+            if isinstance(v, torch.Tensor):
+                batch[k] = v.to(self.device, non_blocking=True)
+
         output = self.model(batch["inputs"])
 
-        return output.detach().cpu()
+        preds = torch.softmax(output, dim=1)
+
+        return preds.cpu().numpy()
 

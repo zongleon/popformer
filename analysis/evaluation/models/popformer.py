@@ -29,16 +29,14 @@ class PopformerModel(BaseModel):
     def preprocess(self, batch):
         # collator
         batch = self.collator(batch)
-
-        # Move tensors to device
-        for k, v in batch.items():
-            if isinstance(v, torch.Tensor):
-                batch[k] = v.to(self.device, non_blocking=True)
-
         return batch
 
     def run(self, batch):
         """Make predictions on the given batch of data."""
+        # Move tensors to device
+        for k, v in batch.items():
+            if isinstance(v, torch.Tensor):
+                batch[k] = v.to(self.device, non_blocking=True)
 
         output = self.model(
             batch["input_ids"],
@@ -46,4 +44,6 @@ class PopformerModel(BaseModel):
             batch["attention_mask"],
         )
 
-        return output["logits"].detach().cpu()
+        preds = torch.softmax(output["logits"], dim=1)
+        
+        return preds.cpu().numpy()

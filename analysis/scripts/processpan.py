@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 
 sys.path.append(".")
 from popformer.dataset import find_nonzero_block_cols
-from pg_gan import global_vars
 
 MAX = 5000
 
@@ -26,6 +25,10 @@ def main(d, out):
     # input metadat
     df = pd.read_csv(metadata)
     df.columns = [col.strip() for col in df.columns.tolist()]
+    # neutral cols
+    #   seed, demo, n1, n2, t1, t2, growth, dfe, lowmut
+    # selection columns
+    #   coordinate, coeff, onset_time, min_freq
     n_seeds = min(MAX, df.shape[0])
     df = df.iloc[:n_seeds]
     total = n_seeds * 2
@@ -38,10 +41,18 @@ def main(d, out):
     neutral_df = pd.concat([neutral_df, pd.DataFrame(neutrals, columns=df.columns[-4:])], axis=1)
     df = pd.concat([df, neutral_df])
     df["sim"] = "Sept25"
-    df["pop"] = "pan_4"
+    df["pop"] = "pan_3" if "pan_3" in out else "pan_4"
+
+    seeds = {}
+    if "pan_3" in out:
+        # only want demo == 0 or demo == 1
+        df = df[(df["demo_id"] == 0) | (df["demo_id"] == 1)].reset_index(drop=True)
+        total = df.shape[0]
+    seeds["neutral"] = df[df["coeff"] == 0]["seed"].tolist()
+    seeds["sweep"] = df[df["coeff"] > 0]["seed"].tolist()
     
     # store results
-    matrices = np.zeros((total, MAX_HAPS, MAX_SNPS))
+    matrices = np.full((total, MAX_HAPS, MAX_SNPS), 5)
     distances = np.zeros((total, MAX_SNPS))
     ns = []
 
@@ -49,7 +60,7 @@ def main(d, out):
     pbar = tqdm(total=total)
 
     for subdir in ["sweep", "neutral"]:
-        for seed in range(n_seeds):
+        for seed in seeds[subdir]:
             pbar.update(1)
             filename = os.path.join(d, subdir, FILE.format(pop="human", 
                                                              typ=subdir,
@@ -59,11 +70,13 @@ def main(d, out):
             # process tree        
             ts = tskit.load(filename)
             gt_matrix = ts.genotype_matrix()
+            # pg-pfn @sara
+            is_biallelic = [sum(gt_matrix[i]) == list(gt_matrix[i]).count(1) for i in range(len(gt_matrix))]
+            gt_matrix = gt_matrix[is_biallelic]
             pbar.write(f"Processing {filename}: {gt_matrix.shape[0]} SNPs")
             num_snps = min(gt_matrix.shape[0], MAX_SNPS)
             num_haps = gt_matrix.shape[1]
-            dist_vec = get_dist_vec(ts)[:num_snps]
-
+            dist_vec = get_dist_vec(ts, mask=is_biallelic)
             gt_matrix = gt_matrix.T
 
             matrices[i, :num_haps, :num_snps] = gt_matrix[:, :num_snps]
@@ -84,8 +97,9 @@ def main(d, out):
     df.to_csv(os.path.join(out, "metadata.csv"), index=False)
 
 
-def get_dist_vec(ts):
+def get_dist_vec(ts, mask=None):
     positions = [round(variant.site.position) for variant in ts.variants()]
+    positions = [pos for i, pos in enumerate(positions) if mask is None or mask[i]]
     snps_total = len(positions)
     
     dist_vec = [0] + [(positions[j+1] - positions[j]) for j in range(snps_total-1)]

@@ -96,36 +96,38 @@ class RandomClassificationEvaluator(BaseHFEvaluator):
 
 
 def plot_roc_curves(y_trues, y_scores, model_names, save_path="figs/roc_curves.png"):
-    fig, ax = plt.figure(figsize=(8, 6), layout="constrained")
+    fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
     for y_true, y_score, model_name in zip(y_trues, y_scores, model_names):
+        if y_true is None:
+            continue
         RocCurveDisplay.from_predictions(
             y_true,
             y_score,
             name=model_name,
-            alpha=0.7,
-        ).plot(ax=ax)
+            ax=ax
+        )
     plt.grid(True, axis="y", alpha=0.3, linestyle="--")
     plt.savefig(save_path, dpi=300)
     plt.close()
 
 
 def plot_pr_curves(y_trues, y_scores, model_names, save_path="figs/pr_curves.png"):
-    fig, ax = plt.figure(figsize=(8, 6), layout="constrained")
+    fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
     for y_true, y_score, model_name in zip(y_trues, y_scores, model_names):
+        if y_true is None:
+            continue
         PrecisionRecallDisplay.from_predictions(
             y_true,
             y_score,
             name=model_name,
-            alpha=0.7,
-        ).plot(ax=ax)
+            ax=ax
+        )
     plt.grid(True, axis="y", alpha=0.3, linestyle="--")
     plt.savefig(save_path, dpi=300)
     plt.close()
 
 
-def plot_acc_by_s(acc_by_s_list, model_names, save_path="figs/lp_acc_vs_s.png"):
-    df_s_acc = pd.DataFrame(acc_by_s_list)
-
+def plot_acc_by_s(df_s_acc, save_path="figs/lp_acc_vs_s.png"):
     fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
     sns.lineplot(
         data=df_s_acc,

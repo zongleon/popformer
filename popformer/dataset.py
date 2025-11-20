@@ -14,8 +14,9 @@ from .util import process_gt_dist
 from tqdm import tqdm
 
 
-def get_pos_and_dist_vec(ts, snps_total):
+def get_pos_and_dist_vec(ts, snps_total, mask=None):
     positions = [round(variant.site.position) for variant in ts.variants()]
+    positions = [pos for i, pos in enumerate(positions) if mask is None or mask[i]]
     assert len(positions) == snps_total
 
     dist_vec = [0] + [(positions[j + 1] - positions[j]) for j in range(snps_total - 1)]
@@ -44,7 +45,9 @@ class Tokenizer:
     def tokenizer(self, sample: np.ndarray) -> np.ndarray:
         # TODO investigate
         # hacky fix
-        sample[:, :, 0][sample[:, :, 0] == 2] = 1
+        if np.any(sample[:, :, 0] == 2):
+            raise ValueError("Genotype matrix has unexpected value 2.")
+        # sample[:, :, 0][sample[:, :, 0] == 2] = 1
 
         # padding
         n_haps = min(sample.shape[0], self.max_haps)
@@ -202,8 +205,10 @@ def trees_to_dataset(
         # process tree
         ts = tskit.load(filepath)
         gt_matrix = ts.genotype_matrix()
+        is_biallelic = [sum(gt_matrix[i]) == list(gt_matrix[i]).count(1) for i in range(len(gt_matrix))]
+        gt_matrix = gt_matrix[is_biallelic]
         num_snps = gt_matrix.shape[0]
-        positions, dist_vec = get_pos_and_dist_vec(ts, num_snps)
+        positions, dist_vec = get_pos_and_dist_vec(ts, num_snps, is_biallelic)
 
         gt_matrix = gt_matrix.T
 

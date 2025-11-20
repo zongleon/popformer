@@ -41,9 +41,9 @@ class BaseEvaluator:
             return np.load(cache_path)
 
         preds = []
-
+        
         dataloader = DataLoader(
-            self.dataset, batch_size=8, shuffle=False, collate_fn=model.preprocess
+            self.dataset, batch_size=self.batch_size, shuffle=False, num_workers=4, collate_fn=model.preprocess
         )
 
         with torch.inference_mode():
@@ -65,6 +65,11 @@ class BaseEvaluator:
         raise NotImplementedError
 
 
+    def trues(self):
+        """Get the true labels for the dataset."""
+        raise NotImplementedError
+
+
 class BaseHFEvaluator(BaseEvaluator):
     """Base class for evaluators that use Hugging Face datasets."""
 
@@ -74,7 +79,7 @@ class BaseHFEvaluator(BaseEvaluator):
         labels_path_or_labels=None,
         *,
         dataset_name=None,
-        batch_size=4,
+        batch_size=1,
     ):
         try:
             self.dataset = load_dataset(dataset_path)
@@ -114,3 +119,7 @@ class BaseHFEvaluator(BaseEvaluator):
             self.chrom = self.dataset["chrom"]
 
         self.batch_size = batch_size
+
+    def trues(self):
+        """Get the true labels for the dataset."""
+        return self.labels if hasattr(self, "labels") else None

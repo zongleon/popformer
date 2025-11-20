@@ -54,23 +54,24 @@ def plot_region(
             p = _windowed_mean(p, window=window, window_type=window_type)
         preds_adj.append(p)
 
-    fig, ax = plt.subplots(figsize=(12, 6), layout="constrained")
-    for p, label in zip(preds_adj, model_names):
-        ax.scatter(pos, p, alpha=0.8, label=label)
+    fig, axs = plt.subplots(len(preds_adj), 1, figsize=(8, 6 * len(preds_adj)), layout="constrained")
+    colors = plt.cm.get_cmap("tab10").colors
+    for p, label, ax, color in zip(preds_adj, model_names, axs, colors):
+        ax.scatter(pos[window:-window], p[window:-window], alpha=0.4, label=label, color=color)
 
-    if label_df is not None:
-        for idx, r in label_df.iterrows():
-            x0 = r["start"]
-            x1 = r["end"]
-            if idx == 0:
-                label = "Selection region"
-            else:
-                label = None
-            ax.axvspan(x0, x1, color="purple", alpha=0.4, label=label)
+        if label_df is not None:
+            for idx, r in label_df.iterrows():
+                x0 = r["start"]
+                x1 = r["end"]
+                if idx == 0:
+                    label = "Selection region"
+                else:
+                    label = None
+                ax.axvspan(x0, x1, color="purple", alpha=0.4, label=label)
 
-    ax.legend(loc="upper right")
-    ax.set_xlabel("Position (bp)")
-    ax.set_ylabel(ylbl)
-    ax.grid(True, alpha=0.3, linestyle="--")
-    ax.ticklabel_format(style="plain", axis="x", scilimits=(0, 0))
+        ax.legend(loc="upper right")
+        ax.set_xlabel("Position (bp)")
+        ax.set_ylabel(ylbl)
+        ax.grid(True, alpha=0.3, linestyle="--")
+        ax.ticklabel_format(style="plain", axis="x", scilimits=(0, 0))
     plt.savefig(save_path, dpi=300)

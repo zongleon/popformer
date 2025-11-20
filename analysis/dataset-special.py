@@ -129,49 +129,71 @@ if __name__ == "__main__":
             f"data/matrices/{which}/distances.npy", mmap_mode="r"
         )
         df = pd.read_csv(f"data/matrices/{which}/metadata.csv")
-        tokenizer = Tokenizer(max_haps=256, num_snps=512)
+
+        if which == "pan_3":
+            mask = df["demo_id"] == int(sys.argv[3])
+            allsamples = allsamples[mask]
+            alldistances = alldistances[mask]
+            df = df[mask].reset_index(drop=True)
+
+        tokenizer = Tokenizer(max_haps=200, num_snps=512)
 
         def gen(samps, dists, meta, times=1, force_s=False):
             sel = meta["coeff"].to_numpy(dtype=np.float16)
             for _ in range(times):
                 for i, (sample, dist, s) in enumerate(zip(samps, dists, sel)):
                     # only nonzero
-                    first, last = find_nonzero_block_cols(sample)
-                    sample = sample[:, first:last]
-                    dist = dist[first:last]
+                    pad_snp = (sample == 5).all(axis=0)
+                    # find first row that's all 5s
+                    pad_hap = (sample == 5).all(axis=1)
+                    sample = sample[~pad_hap][:, ~pad_snp]
+                    dist = dist[~pad_snp]
+
                     positions = np.cumsum(dist)
+                    # tqdm.write(f"{~pad_snp.sum()}: {positions}")
 
                     # tqdm.write(f"{sample.shape}, dist {dist.shape}, pos {positions.shape}")
                     found = False
                     while not found:
                         length = sample.shape[1]
-                        region_len = np.random.randint(32, 512)
-                        start_idx = np.random.randint(0, max(1, length - region_len - 1))
-                        end_idx = min(
-                            start_idx + region_len, length - 1
+                        start_idx = np.random.randint(0, max(1, length - 16))
+                        # get 50k region
+                        end_idx = (
+                            np.searchsorted(positions, positions[start_idx] + 50000)
                         )
-                        # end_idx = min(start_idx + 64, length - 1)
-                        sample = sample[:, start_idx:end_idx]
-                        dist = dist[start_idx:end_idx]
+                        # end_idx = min(start_idx + region_len, length)
+                        found_sample = sample[:, start_idx:end_idx]
+                        found_dist = dist[start_idx:end_idx]
 
                         # if position 125000 is not in the middle 50% of the window,
                         # sel should be 0
-                        # tqdm.write(f"Sample {i}: pos {positions[start_idx]}-{positions[end_idx]}, s={s}")
                         if s == 0:
                             found = True
-                        if positions[start_idx] <= 125000 <= positions[end_idx]:
-                            if force_s:
+                        pos = 125000 if which == "pan_4" else 25000
+                        tqdm.write(
+                            f"Sample {i}: pos {positions[start_idx]}-{positions[end_idx - 1]}, s={s}"
+                            f"\n{start_idx}-{end_idx}, length {length}"
+                            # f"shapes {found_sample.shape}, {found_dist.shape}"
+                        )
+                        if positions[start_idx] <= pos <= positions[end_idx - 1]:
+                            if force_s is None or force_s:
                                 found = True
                         else:
-                            if not force_s:
+                            if force_s is None or not force_s:
                                 s = 0
                                 found = True
 
+                    assert found_sample.shape[1] > 0, (
+                        f"Empty region for sample {i}, start {start_idx}, end {end_idx}, shape {sample.shape}"
+                    )
+
                     sample = np.dstack(
-                        [sample, dist[None, :].repeat(sample.shape[0], axis=0)]
+                        [
+                            found_sample,
+                            found_dist[None, :].repeat(found_sample.shape[0], axis=0),
+                        ]
                     )
                     region, distances = tokenizer(sample)
-
                     # tqdm.write(f"label {1 if s > 0 else 0}, s={s}")
                     yield {
                         "input_ids": region,
@@ -186,12 +208,36 @@ if __name__ == "__main__":
             label_resolution="window",
             include_s=True,
         )
-        # out of 1000 total, 800 can be used for training
-
+        # out of 1000 total, 800 can be used for trainin
         neutrals = df["coeff"] == 0
         selections = df["coeff"] > 0
         train_samples = list(range(800))
         test_samples = list(range(800, 1000))
+
+        if which == "pan_3":
+            neutral_dataset = Dataset.from_generator(
+                lambda: gen(
+                    allsamples[neutrals],
+                    alldistances[neutrals],
+                    df[neutrals],
+                    times=1,
+                    force_s=None,
+                ),
+                features=features,
+            )
+            selected_dataset = Dataset.from_generator(
+                lambda: gen(
+                    allsamples[selections],
+                    alldistances[selections],
+                    df[selections],
+                    times=1,
+                    force_s=True,
+                ),
+                features=features,
+            )
+            dataset = concatenate_datasets([neutral_dataset, selected_dataset])
+            dataset.save_to_disk(f"data/dataset/{which}_demoid-{sys.argv[3]}_balanced/")
+            sys.exit(0)
 
         for split, name in zip(
             [train_samples, test_samples],
@@ -203,7 +249,7 @@ if __name__ == "__main__":
                     alldistances[neutrals][split],
                     df[neutrals].iloc[split],
                     times=1,
-                    force_s=False,
+                    force_s=None,
                 ),
                 features=features,
             )
@@ -212,7 +258,7 @@ if __name__ == "__main__":
                     allsamples[selections][split],
                     alldistances[selections][split],
                     df[selections].iloc[split],
-                    times=1,
+                    times=5,
                     force_s=True,
                 ),
                 features=features,
@@ -222,15 +268,19 @@ if __name__ == "__main__":
                     allsamples[selections][split],
                     alldistances[selections][split],
                     df[selections].iloc[split],
-                    times=3,
+                    times=4,
                     force_s=False,
                 ),
                 features=features,
             )
             dataset = concatenate_datasets(
-                [neutral_dataset, selected_dataset, shoulders_dataset]
+                [
+                    neutral_dataset,
+                    selected_dataset,
+                    shoulders_dataset
+                ]
             )
-            dataset.save_to_disk(f"data/dataset/{which}_{name}/")
+            dataset.save_to_disk(f"data/dataset/{which}_{name}_balanced/")
     elif mode == "runsel_bigregion":
         rng = np.random.default_rng()
 
