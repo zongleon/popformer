@@ -8,12 +8,13 @@ import sys
 sys.path.append("analysis/")
 from evaluation.models.fasternn import FasterNNModel
 
-model = FasterNNModel(model_path="models/fasternn/fasternn.pt", model_name="FASTER-NN", from_init=True)
+model = FasterNNModel(model_path="models/fasternn/fasternn_pops.pt", model_name="FASTER-NN", from_init=True)
 
 # we gotta data from haplotype matrices to
 # shape (batch_size, 2, num_snps)
 
-data = load_from_disk("data/dataset/pan_4_train_balanced")
+# data = load_from_disk("data/dataset/pan_4_train_balanced")
+data = load_from_disk("data/dataset/pops_train")
 split_data = data.train_test_split(test_size=0.1)
 train_data = split_data["train"]
 val_data = split_data["test"]

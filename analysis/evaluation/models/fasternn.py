@@ -167,7 +167,7 @@ class FasterNNModel(BaseModel):
             freqs = torch.mean(mat == 1, dim=0, dtype=torch.float16)
             mafs = torch.minimum(freqs, 1 - freqs)
 
-            combined = torch.stack([mafs, dist], dim=0)
+            combined = torch.stack([mafs, dist.float()], dim=0)
             
             # pad with 0s to self.width
             if combined.shape[1] < self.width:

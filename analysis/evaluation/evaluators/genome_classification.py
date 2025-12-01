@@ -8,17 +8,179 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
     """
     Evaluator that makes classifications for windows that are in order (e.g. a genome).
     """
+    def __init__(
+        self,
+        dataset_path,
+        labels_path_or_labels=None,
+        known_selection_region_df=None,
+        *,
+        dataset_name=None,
+        batch_size=1,
+    ):
+        super().__init__(
+            dataset_path,
+            labels_path_or_labels,
+            dataset_name=dataset_name,
+            batch_size=batch_size,
+        )
+        self.known_selection_region_df = known_selection_region_df
+        self.windowed_values = None
+
+    def _get_windowed(self, windows, margin=0):
+        if self.known_selection_region_df is None:
+            raise ValueError("known_selection_region_df must be provided to get windowed labels.")
+        
+        if self.windowed_values is not None:
+            return self.windowed_values
+
+        df = self.known_selection_region_df.copy()
+        df = df.rename(columns={"Chromosome": "chrom", "Start": "start", "End": "end"})
+
+        if "Population" in df.columns:
+            df = df[df["Population"] == "CEU"]
+
+        if margin > 0:
+            df["start"] = df["start"] - margin
+            df["end"] = df["end"] + margin
+        
+        # convert "chr1", etc
+        if "chrom" in df.columns:
+            df["chrom"] = df["chrom"].apply(lambda x: int(x.replace("chr", "")))
+
+            df = df.set_index(["chrom", "start"])
+        else:
+            df = df.set_index(["start"])
+        df = df.sort_index()
+
+        grossman = []
+        
+        for chrom, start, end in windows:
+            try:
+                if "chrom" in df.index.names:
+                    window_df = df.loc[
+                        (chrom,
+                        slice(start, end)), :
+                    ]
+                else:
+                    window_df = df.loc[
+                        slice(start, end), :
+                    ]
+            except KeyError:
+                window_df = None
+            
+            if window_df is None or window_df.empty:
+                grossman.append(0)
+            else:
+                grossman.append(1)
+
+        grossman = np.array(grossman)
+        self.windowed_values = grossman
+        
+        return grossman
+    
+    
+    def _permutation(self, predictions, region_mask, 
+                     M=10000, seed=None, roll=False):
+        rng = np.random.default_rng(seed)
+        obs = predictions[region_mask].mean()
+        n = len(predictions)
+        null = np.empty(M)
+        for b in range(M):
+            if roll:
+                shift = rng.integers(0, n)
+                null[b] = predictions[np.roll(region_mask, shift)].mean()
+            else:
+                null_mask = rng.permutation(region_mask)
+                null[b] = predictions[null_mask].mean()
+
+        p_emp = (1 + np.sum(null >= obs)) / (1 + M)    # one-sided
+        fe = obs / null.mean()
+        ci_lo, ci_hi = np.percentile(null, [2.5, 97.5])
+        ci = (ci_lo, ci_hi)
+        # optionally convert to FE CI by dividing obs by null percentiles (note asymmetry)
+        fe_ci = (obs / ci_hi, obs / ci_lo)
+
+        return {
+            "obs": obs,
+            "p_emp": p_emp,
+            "null_mean": null.mean(),
+            "ci": ci,
+            "fe": fe,
+            "fe_ci": fe_ci,
+        }
+    
+
+    def _rank_enrichment(self, predictions, region_mask, chroms,
+                         M=10000, seed=None):
+        rng = np.random.default_rng(seed)
+
+        # ranks: 1 = highest score
+        ranks = predictions.argsort()[::-1]
+        rank_pos = np.empty_like(ranks)
+        rank_pos[ranks] = np.arange(len(ranks))
+
+        obs = rank_pos[region_mask].mean()
+
+        # permute by per-chromosome circular shifts
+        null = np.empty(M)
+        chrom_bins = {c: np.where(chroms == c)[0] for c in np.unique(chroms)}
+
+        for b in range(M):
+            perm_pred = predictions.copy()
+            for c, idx in chrom_bins.items():
+                s = rng.integers(0, len(idx))
+                perm_pred[idx] = np.roll(predictions[idx], s)
+
+            r = perm_pred.argsort()[::-1]
+            rp = np.empty_like(r)
+            rp[r] = np.arange(len(r))
+            null[b] = rp[region_mask].mean()
+
+        p_emp = (1 + (null <= obs).sum()) / (1 + M)
+        return {"obs": obs, "p_emp": p_emp,
+                "null_mean": null.mean(),
+                "ci": np.percentile(null, [2.5, 97.5])}
+
+
     def evaluate(self, predictions):
+        results = {}
         if hasattr(self, "start_pos"):
             # store plotting data for region predictions
             start_pos = np.array(self.start_pos)
             end_pos = np.array(self.end_pos)
-            results = {}
+            chrom = np.array(self.chrom)
             results["region_plot_data"] = {
                 "start_pos": start_pos,
                 "end_pos": end_pos,
+                "chrom": chrom,
                 "preds": predictions[:, 1],
             }
+            if hasattr(self, "known_selection_region_df"):
+                # perform permutation test ala test-reichx
+                windows = list(zip(chrom, start_pos, end_pos))
+                true_windowed = self._get_windowed(windows, margin=0)
+                true_windowed_sig = true_windowed == 1
+                # preds = predictions[:, 1]
+                preds = _windowed_mean(
+                    predictions[:, 1],
+                    window=1,
+                    window_type="mean",
+                )
+                perm_results = self._permutation(
+                    preds,
+                    true_windowed_sig,
+                    M=10000,
+                    seed=42,
+                    roll=False,
+                )
+                # perm_results = self._rank_enrichment(
+                #     preds,
+                #     true_windowed_sig,
+                #     chrom,
+                #     M=10000,
+                #     seed=42,
+                # )
+                results.update(perm_results)
 
         return results
 
@@ -32,6 +194,9 @@ def _windowed_mean(
     elif window_type == "min":
         p_pad = np.pad(data, (window // 2, window - 1 - window // 2), mode="edge")
         data = np.array([np.min(p_pad[i : i + window]) for i in range(len(data))])
+    elif window_type == "max":
+        p_pad = np.pad(data, (window // 2, window - 1 - window // 2), mode="edge")
+        data = np.array([np.max(p_pad[i : i + window]) for i in range(len(data))])
     return data
 
 
@@ -54,7 +219,7 @@ def plot_region(
             p = _windowed_mean(p, window=window, window_type=window_type)
         preds_adj.append(p)
 
-    fig, axs = plt.subplots(len(preds_adj), 1, figsize=(8, 6 * len(preds_adj)), layout="constrained")
+    fig, axs = plt.subplots(len(preds_adj), 1, figsize=(12, 6 * len(preds_adj)), layout="constrained")
     colors = plt.cm.get_cmap("tab10").colors
     for p, label, ax, color in zip(preds_adj, model_names, axs, colors):
         ax.scatter(pos[window:-window], p[window:-window], alpha=0.4, label=label, color=color)
@@ -75,3 +240,4 @@ def plot_region(
         ax.grid(True, alpha=0.3, linestyle="--")
         ax.ticklabel_format(style="plain", axis="x", scilimits=(0, 0))
     plt.savefig(save_path, dpi=300)
+    plt.close()

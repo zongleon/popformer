@@ -231,6 +231,7 @@ class RealDataRandomIterator:
         start_idx=None,
         return_pos=False,
         return_all_pos=False,
+        frac_callable=0.5,
     ):
         """
         Get a real region from the data.
@@ -260,7 +261,7 @@ class RealDataRandomIterator:
 
         chrom = util.parse_chrom(start_chrom)
         region = Region(chrom, start_base, end_base)
-        result = region.inside_mask(self.mask_dict)
+        result = region.inside_mask(self.mask_dict, frac_callable=frac_callable)
 
         # if we do have an accessible region
         if result:
@@ -269,7 +270,6 @@ class RealDataRandomIterator:
                 (positions[j + 1] - positions[j]) for j in range(len(positions) - 1)
             ]
 
-            # TODO this function call is wrong
             after = util.process_gt_dist(
                 hap_data,
                 dist_vec,

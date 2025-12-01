@@ -36,6 +36,7 @@ parser.add_argument("--learning_rate", type=float, default=1e-4, help="Learning 
 parser.add_argument(
     "--freeze_layers_up_to", type=int, default=0, help="Number of layers to freeze from the bottom"
 )
+parser.add_argument("--pretrained", type=str, default="models/popf-small", help="Pretrained model path")
 
 args = parser.parse_args()
 
@@ -90,7 +91,7 @@ if MODE == "pop":
 # eval_dataset = dataset["test"]
 
 # test_dataset = dataset["test"].take(512)
-dataset = dataset.train_test_split(0.1, shuffle=True)
+dataset = dataset.train_test_split(0.05, shuffle=True)
 train_dataset = dataset["train"]
 eval_dataset = dataset["test"]
 print(f"Labels distribution in train: {train_dataset['label'].count(0)}, {train_dataset['label'].count(1)}")
@@ -98,7 +99,7 @@ print(f"Labels distribution in eval: {eval_dataset['label'].count(0)}, {eval_dat
 # eval_dataset = test_dataset
 
 model = model.from_pretrained(
-    "./models/popf-small",
+    args.pretrained,
     classifier_dropout=0,
     num_labels=num_labels,
     torch_dtype=torch.bfloat16,
@@ -111,7 +112,7 @@ if args.freeze_layers_up_to > 0:
         for param in model.roberta.encoder.layer[i].parameters():
             param.requires_grad = False
 
-collator = HaploSimpleDataCollator(subsample=(64, 64), subsample_type="diverse",
+collator = HaploSimpleDataCollator(subsample=(32, 32), subsample_type="diverse",
                                    label_dtype=typ)
 
 # training arguments
@@ -126,8 +127,8 @@ training_args = TrainingArguments(
     weight_decay=0.01,
     logging_dir="./logs",
     logging_steps=100,
-    save_steps=100,
-    eval_steps=100,
+    save_steps=500,
+    eval_steps=500,
     eval_strategy="steps",
     save_strategy="steps",
     save_total_limit=4,

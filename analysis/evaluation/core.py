@@ -118,6 +118,18 @@ class BaseHFEvaluator(BaseEvaluator):
             self.end_pos = self.dataset["end_pos"]
             self.chrom = self.dataset["chrom"]
 
+        if "N1" in self.dataset.column_names:
+            self.N1 = np.asarray(self.dataset["N1"])
+            self.N2 = np.asarray(self.dataset["N2"])
+            self.T1 = np.asarray(self.dataset["T1"])
+            self.T2 = np.asarray(self.dataset["T2"])
+            self.growth = np.asarray(self.dataset["growth"])
+            self.has_dfe = np.asarray(self.dataset["has_dfe"])
+            self.low_mut = np.asarray(self.dataset["low_mut"])
+            self.onset_time = np.asarray(self.dataset["onset_time"])
+            self.min_freq = np.asarray(self.dataset["min_freq"])
+            # got a bunch of extras perhaps
+
         self.batch_size = batch_size
 
     def trues(self):

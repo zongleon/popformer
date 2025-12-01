@@ -14,6 +14,7 @@ import subprocess
 import time
 import seaborn as sns
 
+plt.style.use("seaborn-v0_8-talk")
 
 def test_masked_lm(model_path, dataset):
     print("=" * 30)

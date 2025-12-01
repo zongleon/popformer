@@ -168,19 +168,28 @@ def plot_manhattan(preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YR
         axs = [axs]
 
     # Load selection regions
-    sel_df = pd.read_csv("SEL/sel.csv")
+    sel_df = pd.read_csv("data/SEL/sel.csv")
 
     for i, (ax, pop) in enumerate(zip(axs, populations)):
         data = np.load(preds_path_stub.format(pop=pop))
         # logits = torch.tensor(data["preds"])  # [N, 2]
         # probs = torch.softmax(logits, dim=-1)[:, 1].numpy()
-        probs = data["preds"][:, 1]
-        # probs = data["preds"]  # [N,]
+        # probs = data["preds"]
+        probs = data["preds"]  # [N,]
+        if probs.ndim == 2:
+            probs = torch.softmax(torch.tensor(probs), dim=-1)[:, 1].numpy()
         if isinstance(window, int) and window > 1:
             kernel = np.ones(window, dtype=float) / window
-            probs = np.convolve(probs, kernel, mode="same")
-        chrom = data["chrom"]
-        starts = data["start_pos"]
+            probs = np.convolve(probs, kernel, mode="same")[window:-window]
+        # min in window
+        # if isinstance(window, int) and window > 1:
+        #     padded = np.pad(probs, (window//2, window-1-window//2), mode='edge')
+        #     smooth_probs = np.zeros_like(probs)
+        #     for j in range(len(probs)):
+        #         smooth_probs[j] = np.min(padded[j:j+window])
+        #     probs = smooth_probs
+        chrom = data["chrom"][window:-window] if isinstance(window, int) and window > 1 else data["chrom"]
+        starts = data["start_pos"][window:-window] if isinstance(window, int) and window > 1 else data["start_pos"]
 
         for c in chroms:
             mask = (chrom == c)
@@ -195,6 +204,8 @@ def plot_manhattan(preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YR
         sub = sel_df[sel_df["Population"] == pop]
         for _, r in sub.iterrows():
             c_raw = int(r["Chromosome"].replace("chr", ""))
+            if c_raw not in offsets:
+                continue
             x0 = offsets[c_raw] + float(r["Start"])
             x1 = offsets[c_raw] + float(r["End"])
             ax.axvspan(x0, x1, color="purple", # colors(i * 2), 

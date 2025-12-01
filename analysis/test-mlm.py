@@ -12,6 +12,8 @@ from tqdm import tqdm
 import seaborn as sns
 import pandas as pd
 
+plt.style.use("seaborn-v0_8-talk")
+
 def test_model():
     print("=" * 30)
     print("Test: Show model")
@@ -79,6 +81,7 @@ def test_masked_lm(inputs, model):
     pr_img[mask] = counts[mask]
     ax1.imshow(color(pr_img[0]), aspect='auto', cmap='Greys', interpolation="none")
     ax1.set_title("predicted")
+    ax1.set_ylabel("Haplotypes")
 
     # Show ground truth: input_ids with masked id 4 replaced by labels
     gt_img = haps.copy()
@@ -86,8 +89,11 @@ def test_masked_lm(inputs, model):
     gt_img[mask] = inputs["labels"][mask]
     ax2.imshow(color(gt_img[0]), aspect='auto', cmap='Greys', interpolation="none")
     ax2.set_title("ground truth")
+    ax2.set_ylabel("Haplotypes")
+    ax2.set_xlabel("SNPs")
 
     plt.savefig("figs/ex_testmlm.png", dpi=300, bbox_inches="tight")
+    plt.close()
 
     return (lbls == predlbls).mean()
 
@@ -270,7 +276,7 @@ if __name__ == "__main__":
 
     # Load data
     model = PopformerForMaskedLM.from_pretrained(
-        "models/old/popf-small"
+        "models/popf-small"
     )
 
     ds = load_from_disk("data/dataset/pt_tokenized")
@@ -299,7 +305,7 @@ if __name__ == "__main__":
         ci="sd",
     )
 
-    plt.savefig("figs/mlm_accuracies.png", dpi=300, bbox_inches="tight")
+    plt.savefig("figs/ex_acc.png", dpi=300, bbox_inches="tight")
 
     # also print as table
     df.melt(var_name="method", value_name="accuracy").groupby("method").agg(["mean", "std"]).to_csv("mlm_accuracies.csv")

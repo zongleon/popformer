@@ -8,9 +8,10 @@ import sys
 sys.path.append("analysis/")
 from evaluation.models.schrider_resnet import SchriderResnet
 
-model = SchriderResnet(model_path="models/schrider_resnet/schrider_resnet.pt", model_name="resnet34", from_init=True)
+model = SchriderResnet(model_path="models/schrider_resnet/schrider_resnet_pops.pt", model_name="resnet34", from_init=True)
 
-data = load_from_disk("data/dataset/pan_4_train_balanced")
+# data = load_from_disk("data/dataset/pan_4_train_balanced")
+data = load_from_disk("data/dataset/pops_train")
 split_data = data.train_test_split(test_size=0.1)
 train_data = split_data["train"]
 val_data = split_data["test"]

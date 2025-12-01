@@ -11,7 +11,6 @@ import tskit
 
 from popformer.dataset import (
     Tokenizer,
-    find_nonzero_block_cols,
     get_pos_and_dist_vec,
     make_features,
 )
@@ -29,6 +28,76 @@ def parse_ghist_out(path: str):
             data.append((coord, coeff, onset, min_freq))
     return data
 
+def gen_sel(samps, dists, meta, meta_dict = {}, times=1, force_s=False, start_at=None):
+    sel = meta["coeff"].to_numpy(dtype=np.float16)
+    pos = meta["coordinate"].to_numpy(dtype=np.int32)
+    
+    for _ in range(times):
+        for i, (sample, dist, s, p) in enumerate(zip(samps, dists, sel, pos)):
+            # only nonzero
+            pad_snp = (sample == 5).all(axis=0)
+            # find first row that's all 5s
+            pad_hap = (sample == 5).all(axis=1)
+            sample = sample[~pad_hap][:, ~pad_snp]
+            dist = dist[~pad_snp]
+
+            positions = np.cumsum(dist)
+            # tqdm.write(f"{~pad_snp.sum()}: {positions}")
+
+            # tqdm.write(f"{sample.shape}, dist {dist.shape}, pos {positions.shape}")
+            found = False
+            while not found:
+                length = sample.shape[1]
+                start_idx = np.random.randint(0, max(1, length - 128)) if start_at is None else start_at
+                # get 50k region
+                end_idx = (
+                    np.searchsorted(positions, positions[start_idx] + 50000)
+                )
+                # end_idx = min(start_idx + region_len, length)
+                found_sample = sample[:, start_idx:end_idx]
+                found_dist = dist[start_idx:end_idx]
+
+                # if coordinate is not in the middle of the window,
+                # sel should be 0
+                if s == 0:
+                    found = True
+                tqdm.write(
+                    f"Sample {i}: pos {positions[start_idx]}-{positions[end_idx - 1]}, s={s}, p={p}"
+                    f"\n{start_idx}-{end_idx}, length {length}"
+                    # f"shapes {found_sample.shape}, {found_dist.shape}"
+                )
+                if positions[start_idx] <= p <= positions[end_idx - 1]:
+                    if force_s is None or force_s:
+                        found = True
+                else:
+                    if force_s is None or not force_s:
+                        s = 0
+                        found = True
+
+            assert found_sample.shape[1] > 0, (
+                f"Empty region for sample {i}, start {start_idx}, end {end_idx}, shape {sample.shape}"
+            )
+
+            sample = np.dstack(
+                [
+                    found_sample,
+                    found_dist[None, :].repeat(found_sample.shape[0], axis=0),
+                ]
+            )
+            region, distances = tokenizer(sample)
+            # tqdm.write(f"label {1 if s > 0 else 0}, s={s}")
+
+            result =  {
+                "input_ids": region,
+                "distances": distances,
+                "label": 1 if s > 0 else 0,
+                "s": s,
+            }
+
+            for meta_key, dtype in meta_dict.items():
+                result[meta_key] = np.array(meta.iloc[i][meta_key])
+            
+            yield result
 
 if __name__ == "__main__":
     mode = sys.argv[1]
@@ -130,6 +199,22 @@ if __name__ == "__main__":
         )
         df = pd.read_csv(f"data/matrices/{which}/metadata.csv")
 
+        low_sel_samples = np.load("data/matrices/pan_4_low_s/matrices.npy", mmap_mode="r")
+        low_sel_distances = np.load("data/matrices/pan_4_low_s/distances.npy", mmap_mode="r")
+        low_sel_df = pd.read_csv("data/matrices/pan_4_low_s/metadata.csv")
+        
+        meta_dict = {
+            "N1": "float16",
+            "N2": "float16",
+            "T1": "float16",
+            "T2": "float16",
+            "growth": "float16",
+            "has_dfe": "int8",
+            "low_mut": "int8",
+            "onset_time": "float16",
+            "min_freq": "float16",
+        }
+
         if which == "pan_3":
             mask = df["demo_id"] == int(sys.argv[3])
             allsamples = allsamples[mask]
@@ -138,85 +223,23 @@ if __name__ == "__main__":
 
         tokenizer = Tokenizer(max_haps=200, num_snps=512)
 
-        def gen(samps, dists, meta, times=1, force_s=False):
-            sel = meta["coeff"].to_numpy(dtype=np.float16)
-            for _ in range(times):
-                for i, (sample, dist, s) in enumerate(zip(samps, dists, sel)):
-                    # only nonzero
-                    pad_snp = (sample == 5).all(axis=0)
-                    # find first row that's all 5s
-                    pad_hap = (sample == 5).all(axis=1)
-                    sample = sample[~pad_hap][:, ~pad_snp]
-                    dist = dist[~pad_snp]
-
-                    positions = np.cumsum(dist)
-                    # tqdm.write(f"{~pad_snp.sum()}: {positions}")
-
-                    # tqdm.write(f"{sample.shape}, dist {dist.shape}, pos {positions.shape}")
-                    found = False
-                    while not found:
-                        length = sample.shape[1]
-                        start_idx = np.random.randint(0, max(1, length - 16))
-                        # get 50k region
-                        end_idx = (
-                            np.searchsorted(positions, positions[start_idx] + 50000)
-                        )
-                        # end_idx = min(start_idx + region_len, length)
-                        found_sample = sample[:, start_idx:end_idx]
-                        found_dist = dist[start_idx:end_idx]
-
-                        # if position 125000 is not in the middle 50% of the window,
-                        # sel should be 0
-                        if s == 0:
-                            found = True
-                        pos = 125000 if which == "pan_4" else 25000
-                        tqdm.write(
-                            f"Sample {i}: pos {positions[start_idx]}-{positions[end_idx - 1]}, s={s}"
-                            f"\n{start_idx}-{end_idx}, length {length}"
-                            # f"shapes {found_sample.shape}, {found_dist.shape}"
-                        )
-                        if positions[start_idx] <= pos <= positions[end_idx - 1]:
-                            if force_s is None or force_s:
-                                found = True
-                        else:
-                            if force_s is None or not force_s:
-                                s = 0
-                                found = True
-
-                    assert found_sample.shape[1] > 0, (
-                        f"Empty region for sample {i}, start {start_idx}, end {end_idx}, shape {sample.shape}"
-                    )
-
-                    sample = np.dstack(
-                        [
-                            found_sample,
-                            found_dist[None, :].repeat(found_sample.shape[0], axis=0),
-                        ]
-                    )
-                    region, distances = tokenizer(sample)
-                    # tqdm.write(f"label {1 if s > 0 else 0}, s={s}")
-                    yield {
-                        "input_ids": region,
-                        "distances": distances,
-                        "label": 1 if s > 0 else 0,
-                        "s": s,
-                    }
-
         features = make_features(
             tokenizer=tokenizer,
             label_dtype="int8",
             label_resolution="window",
             include_s=True,
+            extra_features=meta_dict,
         )
         # out of 1000 total, 800 can be used for trainin
         neutrals = df["coeff"] == 0
         selections = df["coeff"] > 0
+
         train_samples = list(range(800))
         test_samples = list(range(800, 1000))
 
         if which == "pan_3":
             neutral_dataset = Dataset.from_generator(
-                lambda: gen(
+                lambda: gen_sel(
                     allsamples[neutrals],
                     alldistances[neutrals],
                     df[neutrals],
@@ -226,7 +249,7 @@ if __name__ == "__main__":
                 features=features,
             )
             selected_dataset = Dataset.from_generator(
-                lambda: gen(
+                lambda: gen_sel(
                     allsamples[selections],
                     alldistances[selections],
                     df[selections],
@@ -244,32 +267,113 @@ if __name__ == "__main__":
             ["train", "test"],
         ):
             neutral_dataset = Dataset.from_generator(
-                lambda: gen(
+                lambda: gen_sel(
                     allsamples[neutrals][split],
                     alldistances[neutrals][split],
                     df[neutrals].iloc[split],
-                    times=1,
+                    times=10,
                     force_s=None,
+                    meta_dict=meta_dict
                 ),
                 features=features,
             )
             selected_dataset = Dataset.from_generator(
-                lambda: gen(
+                lambda: gen_sel(
                     allsamples[selections][split],
                     alldistances[selections][split],
                     df[selections].iloc[split],
-                    times=5,
-                    force_s=True,
+                    times=10,
+                    force_s=None,
+                    meta_dict=meta_dict
                 ),
                 features=features,
             )
-            shoulders_dataset = Dataset.from_generator(
-                lambda: gen(
+            low_s_dataset = Dataset.from_generator(
+                lambda: gen_sel(
+                    low_sel_samples[split],
+                    low_sel_distances[split],
+                    low_sel_df.iloc[split],
+                    times=10,
+                    force_s=None,
+                    meta_dict=meta_dict
+                ),
+                features=features,
+            )
+            # shoulders_dataset = Dataset.from_generator(
+            #     lambda: gen_sel(
+            #         allsamples[selections][split],
+            #         alldistances[selections][split],
+            #         df[selections].iloc[split],
+            #         times=4,
+            #         force_s=False,
+            #         pos=125000
+            #     ),
+            #     features=features,
+            # )
+            dataset = concatenate_datasets(
+                [
+                    neutral_dataset,
+                    selected_dataset,
+                    low_s_dataset
+                    # shoulders_dataset
+                ]
+            )
+            dataset.save_to_disk(f"data/dataset/{which}_{name}_with_low_s/")
+    elif mode == "runsel_pops":
+        which = "combined"
+        allsamples: np.ndarray = np.load(
+            f"data/matrices/{which}/matrices.npy", mmap_mode="r"
+        )
+        alldistances: np.ndarray = np.load(
+            f"data/matrices/{which}/distances.npy", mmap_mode="r"
+        )
+        df = pd.read_csv(f"data/matrices/{which}/metadata.csv")
+
+        # shuffle samples, distances, df
+        rng = np.random.default_rng(0)
+        perm = rng.permutation(allsamples.shape[0])
+        allsamples = allsamples[perm]
+        alldistances = alldistances[perm]
+        df = df.iloc[perm].reset_index(drop=True)
+
+        tokenizer = Tokenizer(max_haps=200, num_snps=512)
+
+        features = make_features(
+            tokenizer=tokenizer,
+            label_dtype="int8",
+            label_resolution="window",
+            include_s=True,
+        )
+
+        selections = df["coeff"] > 0
+        neutrals = df["coeff"] == 0
+        n = min(allsamples[neutrals].shape[0], allsamples[selections].shape[0])
+        train_samples = list(range(int(n * 0.8)))
+        test_samples = list(range(int(n * 0.8), n))
+
+        for split, name in zip(
+            [train_samples, test_samples],
+            ["train", "test"],
+        ):
+            neutral_dataset = Dataset.from_generator(
+                lambda: gen_sel(
+                    allsamples[neutrals][split],
+                    alldistances[neutrals][split],
+                    df[neutrals].iloc[split],
+                    times=2,
+                    force_s=None,
+                    start_at=0
+                ),
+                features=features,
+            )
+            selected_dataset = Dataset.from_generator(
+                lambda: gen_sel(
                     allsamples[selections][split],
                     alldistances[selections][split],
                     df[selections].iloc[split],
-                    times=4,
-                    force_s=False,
+                    times=2,
+                    force_s=None,
+                    start_at=0
                 ),
                 features=features,
             )
@@ -277,10 +381,9 @@ if __name__ == "__main__":
                 [
                     neutral_dataset,
                     selected_dataset,
-                    shoulders_dataset
                 ]
             )
-            dataset.save_to_disk(f"data/dataset/{which}_{name}_balanced/")
+            dataset.save_to_disk(f"data/dataset/{which}_{name}/")
     elif mode == "runsel_bigregion":
         rng = np.random.default_rng()
 

@@ -11,6 +11,7 @@ from sklearn.utils import shuffle
 
 models = ["popf-small"]
 train_data = ["pan_4_train"]
+# train_data = ["combined_train"]
 
 
 def load_features(path: str) -> np.ndarray:
@@ -101,10 +102,10 @@ def experiment():
                 stratify=y_tr,
             )
 
-            best_C = grid_search_C(
-                X_train, y_train, X_ev, y_ev
-            )
-            # best_C = 1
+            # best_C = grid_search_C(
+            #     X_train, y_train, X_ev, y_ev
+            # )
+            best_C = 1
 
             classifier = LogisticRegression(random_state=0, C=best_C, max_iter=1000)
             classifier.fit(X_tr, y_tr)

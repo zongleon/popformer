@@ -90,10 +90,11 @@ def make_features(
     include_snp_pos: bool = False,
     include_major_minor: bool = False,
     include_s: bool = False,
+    extra_features: dict[str, str] = None,  # <-- new parameter
 ):
     features = {
         "input_ids": Array2D((tokenizer.max_haps, tokenizer.num_snps + 2), "int8"),
-        "distances": List(Value("float16")),
+        "distances": List(Value("int32")),
     }
     if include_pop:
         features["pop"] = Value(dtype="string")
@@ -108,6 +109,10 @@ def make_features(
         features["s"] = Value("float16")
     if include_major_minor:
         features["major_allele_flipped"] = List(Value("bool"))
+
+    if extra_features is not None:
+        for k, v in extra_features.items():
+            features[k] = Value(v)
 
     if label_dtype is not None:
         if label_resolution == "window":
@@ -150,6 +155,7 @@ def hdf5_to_dataset(
     window_size: int,
     chrom=None,
     bed_file=None,
+    frac_callable=0.5,
 ) -> Dataset:
     # we're not shuffling: get windows in order from all chroms
     # or user specified chroms
@@ -175,6 +181,7 @@ def hdf5_to_dataset(
                     region_len_size=window_size,
                     start_idx=pos,
                     return_pos=True,
+                    frac_callable=frac_callable,
                 )
                 if region == "end_chrom":
                     break
@@ -187,14 +194,14 @@ def hdf5_to_dataset(
                 yield {
                     "input_ids": region,
                     "distances": distance,
-                    # "start_pos": s,
-                    # "end_pos": e,
-                    # "chrom": c,
+                    "start_pos": s,
+                    "end_pos": e,
+                    "chrom": c,
                     # "pop": filepath,
                 }
 
-    # features = make_features(tokenizer, include_pos=True, include_pop=True)
-    features = make_features(tokenizer, include_pos=False, include_pop=False)
+    features = make_features(tokenizer, include_pos=True, include_pop=False)
+    # features = make_features(tokenizer, include_pos=False, include_pop=False)
     return Dataset.from_generator(gen, features=features)
 
 
@@ -349,7 +356,10 @@ def parse_file(filepath, args) -> Dataset:
 
     tokenizer = Tokenizer(max_haps=args.max_haps, num_snps=args.num_snps)
     if ext == ".h5":
-        return hdf5_to_dataset(filepath, tokenizer, args.window_jump, args.window_size, chrom=args.chrom, bed_file=args.bed_file)
+        return hdf5_to_dataset(filepath, tokenizer, 
+                               args.window_jump, args.window_size, 
+                               chrom=args.chrom, bed_file=args.bed_file, 
+                               frac_callable=args.frac_callable)
     elif ext == ".trees":
         return trees_to_dataset(filepath, tokenizer, args.window_jump, args.window_size)
     else:
@@ -389,6 +399,12 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--window_size", type=int, default=50000, help="Window size in base pairs."
+    )
+    parser.add_argument(
+        "--frac_callable",
+        type=float,
+        default=0.5,
+        help="Minimum fraction of callable sites in a window.",
     )
     args = parser.parse_args()
 

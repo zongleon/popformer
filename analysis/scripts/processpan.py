@@ -15,7 +15,7 @@ FILE = "{pop}_{typ}{seed}.trees"
 MAX_HAPS = 256
 MAX_SNPS = 2048
 
-def main(d, out):
+def main(d, out, pop="human"):
     # paths
     d = os.path.dirname(d)
     metadata = os.path.join(d, "sweep_metadata.csv")
@@ -31,17 +31,24 @@ def main(d, out):
     #   coordinate, coeff, onset_time, min_freq
     n_seeds = min(MAX, df.shape[0])
     df = df.iloc[:n_seeds]
-    total = n_seeds * 2
-    print(f"\nLoaded metadata: {n_seeds} seeds ({total} total)")
-    print(f"\tColumns: {df.columns.tolist()}")
 
     # update metadata
-    neutrals = [(-1, 0, 0, 0) for _ in range(n_seeds)]
-    neutral_df = pd.read_csv(metadata2).iloc[:n_seeds]
-    neutral_df = pd.concat([neutral_df, pd.DataFrame(neutrals, columns=df.columns[-4:])], axis=1)
-    df = pd.concat([df, neutral_df])
-    df["sim"] = "Sept25"
-    df["pop"] = "pan_3" if "pan_3" in out else "pan_4"
+    neutral = True
+    try:
+        neutral_df = pd.read_csv(metadata2).iloc[:n_seeds]
+    except FileNotFoundError:
+        neutral = False
+        
+    total = n_seeds * 2 if neutral else n_seeds
+    if neutral:
+        neutrals = [(-1, 0, 0, 0) for _ in range(n_seeds)]
+        neutral_df = pd.concat([neutral_df, pd.DataFrame(neutrals, columns=df.columns[-4:])], axis=1)
+        df = pd.concat([df, neutral_df])
+        df["sim"] = "Sept25"
+        df["pop"] = "pan_3" if "pan_3" in out else "pan_4"
+    
+    print(f"\nLoaded metadata: {n_seeds} seeds ({total} total)")
+    print(f"\tColumns: {df.columns.tolist()}")
 
     seeds = {}
     if "pan_3" in out:
@@ -52,17 +59,19 @@ def main(d, out):
     seeds["sweep"] = df[df["coeff"] > 0]["seed"].tolist()
     
     # store results
-    matrices = np.full((total, MAX_HAPS, MAX_SNPS), 5)
-    distances = np.zeros((total, MAX_SNPS))
+    matrices = np.full((total, MAX_HAPS, MAX_SNPS), 5, dtype=np.int8)
+    distances = np.zeros((total, MAX_SNPS), dtype=np.int32)
     ns = []
 
     i = 0
     pbar = tqdm(total=total)
 
     for subdir in ["sweep", "neutral"]:
+        if subdir == "neutral" and not neutral:
+            continue
         for seed in seeds[subdir]:
             pbar.update(1)
-            filename = os.path.join(d, subdir, FILE.format(pop="human", 
+            filename = os.path.join(d, subdir, FILE.format(pop=pop, 
                                                              typ=subdir,
                                                              seed=seed))
             
@@ -138,5 +147,5 @@ def stats(path):
 
 if __name__ == "__main__":
     # take input dir and output dir as args
-    main(sys.argv[1], sys.argv[2])
+    main(sys.argv[1], sys.argv[2], pop=sys.argv[3] if len(sys.argv) > 3 else "human")
     # stats(sys.argv[2])
