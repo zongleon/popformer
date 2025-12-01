@@ -79,8 +79,7 @@ class PopformerForWindowClassification(RobertaForSequenceClassification):
     """RobertaForSequenceClassification that accepts distances in forward pass."""
     def __init__(self, config):
         super().__init__(config)
-        if getattr(config, "axial", False):
-            self.roberta = PopformerModel(config, add_pooling_layer=False)
+        self.roberta = PopformerModel(config, add_pooling_layer=False)
 
         # test a simple logistic regression head
         self.classifier = PopformerClassificationHead(config)

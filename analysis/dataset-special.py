@@ -59,13 +59,8 @@ def gen_sel(samps, dists, meta, meta_dict = {}, times=1, force_s=False, start_at
 
                 # if coordinate is not in the middle of the window,
                 # sel should be 0
-                if s == 0:
+                if s == 0 or positions[end_idx - 1] < p or positions[start_idx] > p:
                     found = True
-                tqdm.write(
-                    f"Sample {i}: pos {positions[start_idx]}-{positions[end_idx - 1]}, s={s}, p={p}"
-                    f"\n{start_idx}-{end_idx}, length {length}"
-                    # f"shapes {found_sample.shape}, {found_dist.shape}"
-                )
                 if positions[start_idx] <= p <= positions[end_idx - 1]:
                     if force_s is None or force_s:
                         found = True
@@ -73,6 +68,12 @@ def gen_sel(samps, dists, meta, meta_dict = {}, times=1, force_s=False, start_at
                     if force_s is None or not force_s:
                         s = 0
                         found = True
+                if found:
+                    tqdm.write(
+                        f"Sample {i}: pos {positions[start_idx]}-{positions[end_idx - 1]}, s={s}, p={p}"
+                        f"\n{start_idx}-{end_idx}, length {length}"
+                        # f"shapes {found_sample.shape}, {found_dist.shape}"
+                    )
 
             assert found_sample.shape[1] > 0, (
                 f"Empty region for sample {i}, start {start_idx}, end {end_idx}, shape {sample.shape}"
@@ -271,7 +272,7 @@ if __name__ == "__main__":
                     allsamples[neutrals][split],
                     alldistances[neutrals][split],
                     df[neutrals].iloc[split],
-                    times=10,
+                    times=5,
                     force_s=None,
                     meta_dict=meta_dict
                 ),
@@ -283,7 +284,18 @@ if __name__ == "__main__":
                     alldistances[selections][split],
                     df[selections].iloc[split],
                     times=10,
-                    force_s=None,
+                    force_s=True,
+                    meta_dict=meta_dict
+                ),
+                features=features,
+            )
+            shoulders_dataset = Dataset.from_generator(
+                lambda: gen_sel(
+                    allsamples[selections][split],
+                    alldistances[selections][split],
+                    df[selections].iloc[split],
+                    times=5,
+                    force_s=False,
                     meta_dict=meta_dict
                 ),
                 features=features,
@@ -293,12 +305,24 @@ if __name__ == "__main__":
                     low_sel_samples[split],
                     low_sel_distances[split],
                     low_sel_df.iloc[split],
-                    times=10,
-                    force_s=None,
+                    times=5,
+                    force_s=True,
                     meta_dict=meta_dict
                 ),
                 features=features,
             )
+            low_s_shoulders_dataset = Dataset.from_generator(
+                lambda: gen_sel(
+                    low_sel_samples[split],
+                    low_sel_distances[split],
+                    low_sel_df.iloc[split],
+                    times=5,
+                    force_s=False,
+                    meta_dict=meta_dict
+                ),
+                features=features,
+            )
+            
             # shoulders_dataset = Dataset.from_generator(
             #     lambda: gen_sel(
             #         allsamples[selections][split],
@@ -314,10 +338,22 @@ if __name__ == "__main__":
                 [
                     neutral_dataset,
                     selected_dataset,
-                    low_s_dataset
-                    # shoulders_dataset
+                    shoulders_dataset,
+                    low_s_dataset,
+                    low_s_shoulders_dataset,
                 ]
             )
+
+            # plot distribution of s
+            import matplotlib.pyplot as plt
+            s_values = dataset["s"]
+            plt.hist(s_values, bins=50)
+            plt.xlabel("Selection coefficient (s)")
+            plt.ylabel("Frequency")
+            plt.title(f"Distribution of selection coefficients in {which} {name} dataset")
+            plt.savefig(f"figs/{which}_{name}_s_distribution.png") 
+            plt.close()
+
             dataset.save_to_disk(f"data/dataset/{which}_{name}_with_low_s/")
     elif mode == "runsel_pops":
         which = "combined"

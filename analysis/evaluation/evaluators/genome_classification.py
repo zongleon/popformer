@@ -8,11 +8,13 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
     """
     Evaluator that makes classifications for windows that are in order (e.g. a genome).
     """
+
     def __init__(
         self,
         dataset_path,
         labels_path_or_labels=None,
         known_selection_region_df=None,
+        s_coeff_df=None,
         *,
         dataset_name=None,
         batch_size=1,
@@ -24,12 +26,15 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
             batch_size=batch_size,
         )
         self.known_selection_region_df = known_selection_region_df
+        self.s_coeff_df = s_coeff_df
         self.windowed_values = None
 
     def _get_windowed(self, windows, margin=0):
         if self.known_selection_region_df is None:
-            raise ValueError("known_selection_region_df must be provided to get windowed labels.")
-        
+            raise ValueError(
+                "known_selection_region_df must be provided to get windowed labels."
+            )
+
         if self.windowed_values is not None:
             return self.windowed_values
 
@@ -42,7 +47,7 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
         if margin > 0:
             df["start"] = df["start"] - margin
             df["end"] = df["end"] + margin
-        
+
         # convert "chr1", etc
         if "chrom" in df.columns:
             df["chrom"] = df["chrom"].apply(lambda x: int(x.replace("chr", "")))
@@ -53,21 +58,16 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
         df = df.sort_index()
 
         grossman = []
-        
+
         for chrom, start, end in windows:
             try:
                 if "chrom" in df.index.names:
-                    window_df = df.loc[
-                        (chrom,
-                        slice(start, end)), :
-                    ]
+                    window_df = df.loc[(chrom, slice(start, end)), :]
                 else:
-                    window_df = df.loc[
-                        slice(start, end), :
-                    ]
+                    window_df = df.loc[slice(start, end), :]
             except KeyError:
                 window_df = None
-            
+
             if window_df is None or window_df.empty:
                 grossman.append(0)
             else:
@@ -75,12 +75,10 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
 
         grossman = np.array(grossman)
         self.windowed_values = grossman
-        
+
         return grossman
-    
-    
-    def _permutation(self, predictions, region_mask, 
-                     M=10000, seed=None, roll=False):
+
+    def _permutation(self, predictions, region_mask, M=10000, seed=None, roll=False):
         rng = np.random.default_rng(seed)
         obs = predictions[region_mask].mean()
         n = len(predictions)
@@ -93,7 +91,7 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
                 null_mask = rng.permutation(region_mask)
                 null[b] = predictions[null_mask].mean()
 
-        p_emp = (1 + np.sum(null >= obs)) / (1 + M)    # one-sided
+        p_emp = (1 + np.sum(null >= obs)) / (1 + M)  # one-sided
         fe = obs / null.mean()
         ci_lo, ci_hi = np.percentile(null, [2.5, 97.5])
         ci = (ci_lo, ci_hi)
@@ -108,10 +106,8 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
             "fe": fe,
             "fe_ci": fe_ci,
         }
-    
 
-    def _rank_enrichment(self, predictions, region_mask, chroms,
-                         M=10000, seed=None):
+    def _rank_enrichment(self, predictions, region_mask, chroms, M=10000, seed=None):
         rng = np.random.default_rng(seed)
 
         # ranks: 1 = highest score
@@ -137,10 +133,12 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
             null[b] = rp[region_mask].mean()
 
         p_emp = (1 + (null <= obs).sum()) / (1 + M)
-        return {"obs": obs, "p_emp": p_emp,
-                "null_mean": null.mean(),
-                "ci": np.percentile(null, [2.5, 97.5])}
-
+        return {
+            "obs": obs,
+            "p_emp": p_emp,
+            "null_mean": null.mean(),
+            "ci": np.percentile(null, [2.5, 97.5]),
+        }
 
     def evaluate(self, predictions):
         results = {}
@@ -155,7 +153,10 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
                 "chrom": chrom,
                 "preds": predictions[:, 1],
             }
-            if hasattr(self, "known_selection_region_df"):
+            if (
+                hasattr(self, "known_selection_region_df")
+                and self.known_selection_region_df is not None
+            ):
                 # perform permutation test ala test-reichx
                 windows = list(zip(chrom, start_pos, end_pos))
                 true_windowed = self._get_windowed(windows, margin=0)
@@ -182,6 +183,43 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
                 # )
                 results.update(perm_results)
 
+            if hasattr(self, "s_coeff_df") and self.s_coeff_df is not None:
+                # correlate predictions with s coefficients
+                s_df = self.s_coeff_df.copy()
+                s_df = s_df.rename(
+                    columns={
+                        "Chromosome": "chrom",
+                        "Start": "start",
+                        "End": "end",
+                        "s_coeff": "s_coeff",
+                    }
+                )
+                if "Population" in s_df.columns:
+                    s_df = s_df[s_df["Population"] == "CEU"]
+
+                s_values = []
+                for chrom_i, start_i, end_i in windows:
+                    try:
+                        s_row = s_df[
+                            (s_df["chrom"] == chrom_i)
+                            & (s_df["start"] <= start_i)
+                            & (s_df["end"] >= end_i)
+                        ]
+                        if not s_row.empty:
+                            s_values.append(s_row["s_coeff"].values[0])
+                        else:
+                            s_values.append(np.nan)
+                    except KeyError:
+                        s_values.append(np.nan)
+
+                s_values = np.array(s_values)
+                pred_probs = predictions[:, 1]
+                valid_mask = ~np.isnan(s_values)
+                if np.sum(valid_mask) > 0:
+                    corr = np.corrcoef(pred_probs[valid_mask], s_values[valid_mask])[
+                        0, 1
+                    ]
+                    results["s_coeff_correlation"] = corr
         return results
 
 
@@ -209,6 +247,7 @@ def plot_region(
     window=3,
     label_df=None,
     window_type="mean",
+    line=True
 ):
     ylbl = "pred. probability of selection"
     pos = (end_pos + start_pos) // 2
@@ -219,10 +258,21 @@ def plot_region(
             p = _windowed_mean(p, window=window, window_type=window_type)
         preds_adj.append(p)
 
-    fig, axs = plt.subplots(len(preds_adj), 1, figsize=(12, 6 * len(preds_adj)), layout="constrained")
+    fig, axs = plt.subplots(
+        len(preds_adj), 1, figsize=(12, 6 * len(preds_adj)), layout="constrained"
+    )
+    if len(preds_adj) == 1:
+        axs = [axs]
     colors = plt.cm.get_cmap("tab10").colors
     for p, label, ax, color in zip(preds_adj, model_names, axs, colors):
-        ax.scatter(pos[window:-window], p[window:-window], alpha=0.4, label=label, color=color)
+        if line:
+            ax.plot(
+                pos[window:-window], p[window:-window], alpha=0.7, label=label, color=color
+            )
+        else:
+            ax.scatter(
+                pos[window:-window], p[window:-window], alpha=0.4, label=label, color=color
+            )
 
         if label_df is not None:
             for idx, r in label_df.iterrows():

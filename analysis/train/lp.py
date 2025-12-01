@@ -10,7 +10,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
 
 models = ["popf-small"]
-train_data = ["pan_4_train"]
+train_data = ["pan_4_train_with_low_s"]
 # train_data = ["combined_train"]
 
 
@@ -105,7 +105,7 @@ def experiment():
             # best_C = grid_search_C(
             #     X_train, y_train, X_ev, y_ev
             # )
-            best_C = 1
+            best_C = 100
 
             classifier = LogisticRegression(random_state=0, C=best_C, max_iter=1000)
             classifier.fit(X_tr, y_tr)

@@ -24,7 +24,7 @@ class BaseModel:
 class BaseEvaluator:
     """Base class for all evaluators."""
 
-    def run(self, model: BaseModel):
+    def run(self, model: BaseModel, force: bool = False):
         """Evaluate the model by making random classifications."""
         # determine names for cache key
         self.model_name = getattr(model, "model_name", model.__class__.__name__)
@@ -37,7 +37,7 @@ class BaseEvaluator:
         cache_path = os.path.join(cache_dir, f"{dataset_name}__{self.model_name}.npy")
 
         # return cached predictions if available
-        if os.path.exists(cache_path):
+        if not force and os.path.exists(cache_path):
             return np.load(cache_path)
 
         preds = []

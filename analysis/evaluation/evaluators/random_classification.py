@@ -246,11 +246,11 @@ def plot_auroc_vs_s_facets(df_facets, save_dir="figs", filename_prefix="auroc_vs
             ax.grid(True, axis="y", alpha=0.3, linestyle="--")
             ax.set_xticks(range(len(s_order)))
             ax.set_xticklabels(s_order, rotation=45)
-        g.fig.subplots_adjust(top=0.85)
-        g.fig.suptitle(f"AUROC vs s faceted by {var}")
+        g.figure.subplots_adjust(top=0.85)
+        g.figure.suptitle(f"AUROC vs s faceted by {var}")
         out_path = os.path.join(save_dir, f"{filename_prefix}__{var}.png")
         g.savefig(out_path, dpi=300)
-        plt.close(g.fig)
+        plt.close()
         saved_paths.append(out_path)
     return saved_paths
 
