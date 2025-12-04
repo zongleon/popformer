@@ -11,7 +11,6 @@ from sklearn.utils import shuffle
 
 models = ["popf-small"]
 train_data = ["pan_4_train_with_low_s"]
-# train_data = ["combined_train"]
 
 
 def load_features(path: str) -> np.ndarray:
@@ -78,7 +77,7 @@ def experiment():
         for train_set in train_data:
             print(f"\n=== Model: {model}, Train set: {train_set} ===")
             train_features = load_features(
-                f"data/dataset/features/{train_set}_{model}.npz"
+                f"data/features/{train_set}_{model}.npz"
             )
             train_labels = load_labels(
                 f"data/dataset/{train_set}/", label_column="label"

@@ -69,80 +69,49 @@ class RandomClassificationEvaluator(BaseHFEvaluator):
             results["s_masks"] = s_masks
 
 
-            # --- AUROC vs s with faceting by other variables ---
-            facet_vars = [
-                v for v in ["growth", "low_mut", "has_dfe", "onset_time", "min_freq"] if hasattr(self, v)
-            ]
+        # --- AUROC vs s with faceting by other variables ---
+        facet_vars = {
+            k: v for k, v in {
+                "growth": "bin",
+                "low_mut": "binary", 
+                "has_dfe": "binary",
+                "onset_time": "zero_bin",
+                "min_freq": "zero_bin"
+            }.items() if hasattr(self, k)
+        }
+        
+        for var, typ in facet_vars.items():
+            # add masks for each facet variable
+            if typ == "binary":
+                facet_values = [0, 1]
+            elif typ == "bin":
+                # bin into 5 equal sized bins
+                var_values = getattr(self, var)
+                facet_values = pd.qcut(var_values, q=5, duplicates="drop").unique()
+                facet_values = sorted(facet_values, key=lambda x: x.left)
+            elif typ == "zero_bin":
+                # bin into a bin for 0 and 5 bins for non-zero values
+                var_values = getattr(self, var)
+                facet_values = [0] + sorted(list(pd.qcut(var_values[var_values != 0], q=5, duplicates="drop").unique()), key=lambda x: x.left)
+            else:
+                continue
 
-            facet_rows = []
-
-            # helper to compute auroc for a mask safely
-            def safe_auroc(mask):
-                y_true_sub = lbls[mask]
-                # need at least one positive and one negative
-                if y_true_sub.sum() == 0 or y_true_sub.sum() == len(y_true_sub):
-                    return np.nan
-                try:
-                    return roc_auc_score(y_true_sub, pos_preds[mask])
-                except ValueError:
-                    return np.nan
-
-            # Prepare categorical s_bin ordering
-            s_bin_labels = [b[0] for b in bins]
-
-            # Precompute s_bin masks list for reuse
-            s_bin_masks = [(label, ((s > a) & (s <= b)) | (s == 0)) for label, (a, b) in bins]
-
-            for var in facet_vars:
-                values = getattr(self, var)
-                # Normalize / bin if too many unique values
-                unique_vals = np.unique(values)
-                # If numeric and too many unique, bin into quartiles
-                if (
-                    np.issubdtype(unique_vals.dtype, np.number)
-                    and len(unique_vals) > 8
-                ):
-                    # create quartile bins
-                    try:
-                        # pandas qcut for nicer labels
-                        q = pd.qcut(values, 4, duplicates="drop")
-                        value_labels = q.astype(str)
-                    except ValueError:
-                        # fallback: just use raw values
-                        value_labels = values.astype(str)
+            facet_masks = []
+            for val in facet_values:
+                if typ == "binary":
+                    mask = getattr(self, var) == val
                 else:
-                    value_labels = values.astype(str)
+                    # masks for binned variables
+                    mask = pd.Series(getattr(self, var)).apply(lambda x: x in val if not val == 0 else x == 0).values
 
-                for val_label in np.unique(value_labels):
-                    val_mask = value_labels == val_label
-                    for s_label, s_mask in s_bin_masks:
-                        combined_mask = val_mask & s_mask
-                        if combined_mask.sum() < 5:  # skip tiny groups
-                            continue
-                        auroc_bin = safe_auroc(combined_mask)
-                        facet_rows.append(
-                            {
-                                "facet_var": var,
-                                "facet_value": val_label,
-                                "s_bin": s_label,
-                                "auroc": auroc_bin,
-                                "model": getattr(self, "model_name", "model"),
-                            }
-                        )
-
-            if facet_rows:
-                df_facets = pd.DataFrame(facet_rows)
-                df_facets["s_bin"] = pd.Categorical(df_facets["s_bin"], categories=s_bin_labels, ordered=True)
-                results["auroc_s_facets_df"] = df_facets
-
-            # plot the distribution of s
-            # fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
-            # sns.histplot(s[s > 0], bins=50, kde=False, ax=ax)
-            # ax.set_xlabel("Selection coefficient s")
-            # ax.set_ylabel("Count")
-            # ax.grid(True, axis="y", alpha=0.3, linestyle="--")
-            # plt.savefig("figs/lp_s_dist.png", dpi=300)
-            # plt.close()
+                print(f"Facet variable '{var}' value '{val}' has {np.sum(mask)} samples.")
+                facet_masks.append(
+                    {
+                        "facet_value": val,
+                        "mask": mask,
+                    }
+                )
+            results[var + "_masks"] = facet_masks
 
         results.update({
             "model_name": self.model_name,
@@ -156,8 +125,16 @@ class RandomClassificationEvaluator(BaseHFEvaluator):
         return results
 
 
-def plot_roc_curves(y_trues, y_scores, model_names, colors=None, save_path="figs/roc_curves.png"):
-    fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
+def plot_roc_curves(y_trues, y_scores, model_names, colors=None, ax=None, add_ax_labels=False, save_path="figs/roc_curves.png"):
+    new = False
+    if not ax:
+        new = True
+        fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
+
+    if not add_ax_labels:
+        old_xlabel = ax.get_xlabel()
+        old_ylabel = ax.get_ylabel()
+
     for i, (y_true, y_score, model_name) in enumerate(zip(y_trues, y_scores, model_names)):
         if y_true is None:
             continue
@@ -168,15 +145,30 @@ def plot_roc_curves(y_trues, y_scores, model_names, colors=None, save_path="figs
             ax=ax,
             curve_kwargs=None if colors is None else {"color": colors[i]},
         )
-    plt.xlabel("False Positive Rate")
-    plt.ylabel("True Positive Rate")
-    plt.grid(True, axis="y", alpha=0.3, linestyle="--")
-    plt.savefig(save_path, dpi=300)
-    plt.close()
+
+    if not add_ax_labels:
+        ax.set_xlabel(old_xlabel)
+        ax.set_ylabel(old_ylabel)
+
+    if new:
+        if add_ax_labels:
+            plt.xlabel("False Positive Rate")
+            plt.ylabel("True Positive Rate")
+        plt.grid(True, axis="y", alpha=0.3, linestyle="--")
+        plt.savefig(save_path, dpi=300)
+        plt.close()
 
 
-def plot_pr_curves(y_trues, y_scores, model_names, colors=None, save_path="figs/pr_curves.png"):
-    fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
+def plot_pr_curves(y_trues, y_scores, model_names, colors=None, ax=None, add_ax_labels=False, save_path="figs/pr_curves.png"):
+    new = False
+    if not ax:
+        new = True
+        fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
+
+    if not add_ax_labels:
+        old_xlabel = ax.get_xlabel()
+        old_ylabel = ax.get_ylabel()
+    
     for i, (y_true, y_score, model_name) in enumerate(zip(y_trues, y_scores, model_names)):
         if y_true is None:
             continue
@@ -187,11 +179,18 @@ def plot_pr_curves(y_trues, y_scores, model_names, colors=None, save_path="figs/
             ax=ax,
             color=None if colors is None else colors[i],
         )
-    plt.xlabel("Recall")
-    plt.ylabel("Precision")
-    plt.grid(True, axis="y", alpha=0.3, linestyle="--")
-    plt.savefig(save_path, dpi=300)
-    plt.close()
+    
+    if not add_ax_labels:
+        ax.set_xlabel(old_xlabel)
+        ax.set_ylabel(old_ylabel)
+
+    if new:
+        if add_ax_labels:
+            plt.xlabel("Recall")
+            plt.ylabel("Precision")
+        plt.grid(True, axis="y", alpha=0.3, linestyle="--")
+        plt.savefig(save_path, dpi=300)
+        plt.close()
 
 
 def plot_acc_by_s(df_s_acc, save_path="figs/lp_acc_vs_s.png"):
@@ -209,48 +208,3 @@ def plot_acc_by_s(df_s_acc, save_path="figs/lp_acc_vs_s.png"):
     ax.grid(True, axis="y", alpha=0.3, linestyle="--")
     plt.savefig(save_path, dpi=300)
     plt.close()
-
-
-def plot_auroc_vs_s_facets(df_facets, save_dir="figs", filename_prefix="auroc_vs_s"):
-    """Plot AUROC vs s bins with separate facet grids for each variable.
-
-    Expects DataFrame with columns:
-        facet_var, facet_value, s_bin, auroc, model
-    Generates one PNG per facet_var.
-    """
-    os.makedirs(save_dir, exist_ok=True)
-
-    facet_vars = df_facets["facet_var"].unique()
-    saved_paths = []
-    for var in facet_vars:
-        sub = df_facets[df_facets["facet_var"] == var]
-        # Ensure ordering preserved
-        if isinstance(sub["s_bin"].dtype, pd.CategoricalDtype):
-            s_order = sub["s_bin"].cat.categories
-        else:
-            s_order = sorted(sub["s_bin"].unique())
-        g = sns.FacetGrid(sub, col="facet_value", col_wrap=4, sharey=True, height=3)
-        def _lineplot(data, color=None):
-            sns.lineplot(
-                data=data,
-                x="s_bin",
-                y="auroc",
-                hue="model",
-                hue_order=sorted(sub["model"].unique()),
-                marker="o",
-            )
-        g.map_dataframe(_lineplot)
-        g.set_axis_labels("s bin", "AUROC")
-        g.add_legend(title="Model")
-        for ax in g.axes.flatten():
-            ax.grid(True, axis="y", alpha=0.3, linestyle="--")
-            ax.set_xticks(range(len(s_order)))
-            ax.set_xticklabels(s_order, rotation=45)
-        g.figure.subplots_adjust(top=0.85)
-        g.figure.suptitle(f"AUROC vs s faceted by {var}")
-        out_path = os.path.join(save_dir, f"{filename_prefix}__{var}.png")
-        g.savefig(out_path, dpi=300)
-        plt.close()
-        saved_paths.append(out_path)
-    return saved_paths
-

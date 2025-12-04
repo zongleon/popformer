@@ -28,13 +28,13 @@ class BaseEvaluator:
         """Evaluate the model by making random classifications."""
         # determine names for cache key
         self.model_name = getattr(model, "model_name", model.__class__.__name__)
-        dataset_name = getattr(self, "dataset_name")
+        dataset_path = getattr(self, "dataset_path")
 
         # simple file-based cache path
         # TODO LZ: allow user to set cache dir
         cache_dir = os.path.join("preds", "evaluation")
         os.makedirs(cache_dir, exist_ok=True)
-        cache_path = os.path.join(cache_dir, f"{dataset_name}__{self.model_name}.npy")
+        cache_path = os.path.join(cache_dir, f"{os.path.basename(dataset_path)}__{self.model_name}.npy")
 
         # return cached predictions if available
         if not force and os.path.exists(cache_path):
@@ -81,6 +81,7 @@ class BaseHFEvaluator(BaseEvaluator):
         dataset_name=None,
         batch_size=1,
     ):
+        self.dataset_path = dataset_path
         try:
             self.dataset = load_dataset(dataset_path)
         except ValueError:

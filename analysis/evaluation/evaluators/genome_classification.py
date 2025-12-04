@@ -2,6 +2,8 @@ from ..core import BaseHFEvaluator
 
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
 
 
 class GenomeClassificationEvaluator(BaseHFEvaluator):
@@ -183,6 +185,9 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
                 # )
                 results.update(perm_results)
 
+                # also results should include a significant windows mask
+                results["sig_mask"] = true_windowed_sig
+
             if hasattr(self, "s_coeff_df") and self.s_coeff_df is not None:
                 # correlate predictions with s coefficients
                 s_df = self.s_coeff_df.copy()
@@ -206,20 +211,15 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
                             & (s_df["end"] >= end_i)
                         ]
                         if not s_row.empty:
-                            s_values.append(s_row["s_coeff"].values[0])
+                            # mean if multiple
+                            s_values.append(s_row["s_coeff"].mean())
                         else:
                             s_values.append(np.nan)
                     except KeyError:
                         s_values.append(np.nan)
 
                 s_values = np.array(s_values)
-                pred_probs = predictions[:, 1]
-                valid_mask = ~np.isnan(s_values)
-                if np.sum(valid_mask) > 0:
-                    corr = np.corrcoef(pred_probs[valid_mask], s_values[valid_mask])[
-                        0, 1
-                    ]
-                    results["s_coeff_correlation"] = corr
+                results["s_coeff"] = s_values
         return results
 
 
@@ -289,5 +289,48 @@ def plot_region(
         ax.set_ylabel(ylbl)
         ax.grid(True, alpha=0.3, linestyle="--")
         ax.ticklabel_format(style="plain", axis="x", scilimits=(0, 0))
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+
+def plot_boxplot(
+    y_preds, model_names, sig_mask, save_path="figs/lp_boxplot.png"
+):
+    # plot boxplot of predictions in sig vs non-sig regions, for each model
+    df = []
+    for preds, model_name in zip(y_preds, model_names):
+        for i in range(len(preds)):
+            df.append(
+                {
+                    "model": model_name,
+                    "pred_prob": preds[i],
+                    "region": "significant" if sig_mask[i] else "non-significant",
+                }
+            )
+    df = pd.DataFrame(df)
+    fig, ax = plt.subplots(figsize=(10, 6), layout="constrained")
+    sns.boxenplot(
+        data=df,
+        x="model",
+        y="pred_prob",
+        hue="region",
+        ax=ax,
+    )
+    ax.set_ylabel("pred. probability of selection")
+    ax.grid(True, axis="y", alpha=0.3, linestyle="--")
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+
+def plot_correlation(y1, y2, y1lab, y2lab, save_path="figs/lp_s_coeff_correlation.png"):
+    fig, ax = plt.subplots(figsize=(8, 8), layout="constrained")
+    ax.scatter(y1, y2, alpha=0.5)
+    ax.set_xlabel(y1lab)
+    ax.set_ylabel(y2lab)
+    # plot regression line
+    m, b = np.polyfit(y1[~np.isnan(y2)], y2[~np.isnan(y2)], 1)
+    r2 = np.corrcoef(y1[~np.isnan(y2)], y2[~np.isnan(y2)])[0, 1] ** 2
+    ax.plot(y1, m * y1 + b, color="red", label=f"$R^2$={r2:.3f}")
+    ax.grid(True, alpha=0.3, linestyle="--")
     plt.savefig(save_path, dpi=300)
     plt.close()

@@ -288,10 +288,27 @@ class SchriderResnet(BaseModel):
             # # print(ii)
             # mat = mat[ii,:]
 
-            # ii = torch.argsort(mat, dim=0)  # or use numpy: np.lexsort(mat.T)
-            mat = mat[torch.sort(mat, dim=0)[1][:,0], :]
+            # sort by computing hamming distances, picking the haplotype with
+            # the smallest total distance to all other haplotypes, then iteratively
+            # picking the next closest haplotype
+            n_haps = mat.shape[0]
+            D = torch.cdist(mat.float(), mat.float(), p=0)  # shape (n_haps, n_haps)
+            D /= mat.shape[1]  # normalize
+            D_np = D.cpu().numpy()
+            selected = []
+            unselected = set(range(n_haps))
+            # pick first haplotype with smallest total distance
+            first_hap = np.argmin(D_np.sum(axis=1))
+            selected.append(first_hap)
+            unselected.remove(first_hap)
+            while unselected:
+                last_hap = selected[-1]
+                unselected_list = list(unselected)
+                next_hap = unselected_list[np.argmin(D_np[last_hap, unselected_list])]
+                selected.append(next_hap)
+                unselected.remove(next_hap)
 
-            inputs.append(mat.unsqueeze(0).unsqueeze(0))  # add batch + channel dim
+            inputs.append(mat[selected, :].unsqueeze(0).unsqueeze(0))  # add batch + channel dim
 
         batch["inputs"] = torch.cat(inputs, dim=0).to(torch.float32)  # shape (batch_size, 2, num_snps)
         batch["labels"] = torch.tensor([ex for ex in batch["labels"]])

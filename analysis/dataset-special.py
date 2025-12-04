@@ -28,7 +28,8 @@ def parse_ghist_out(path: str):
             data.append((coord, coeff, onset, min_freq))
     return data
 
-def gen_sel(samps, dists, meta, meta_dict = {}, times=1, force_s=False, start_at=None):
+def gen_sel(samps, dists, meta, meta_dict = {}, times=1, force_s=False, start_at=None, 
+            binary=True):
     sel = meta["coeff"].to_numpy(dtype=np.float16)
     pos = meta["coordinate"].to_numpy(dtype=np.int32)
     
@@ -48,7 +49,7 @@ def gen_sel(samps, dists, meta, meta_dict = {}, times=1, force_s=False, start_at
             found = False
             while not found:
                 length = sample.shape[1]
-                start_idx = np.random.randint(0, max(1, length - 128)) if start_at is None else start_at
+                start_idx = np.random.randint(0, length) if start_at is None else start_at
                 # get 50k region
                 end_idx = (
                     np.searchsorted(positions, positions[start_idx] + 50000)
@@ -57,23 +58,50 @@ def gen_sel(samps, dists, meta, meta_dict = {}, times=1, force_s=False, start_at
                 found_sample = sample[:, start_idx:end_idx]
                 found_dist = dist[start_idx:end_idx]
 
-                # if coordinate is not in the middle of the window,
+                # check if selection is in region
+                # if force_s is True, region must contain selected site
+                # if force_s is False, region must be a shoulder region
+                # if force_s is None, any region is allowed
                 # sel should be 0
-                if s == 0 or positions[end_idx - 1] < p or positions[start_idx] > p:
+                SHOULDER_DISTANCE = 10000
+
+                region_start = positions[start_idx]
+                region_end = positions[end_idx - 1]
+
+                # Shoulders: region must be at least SHOULDER_DISTANCE away from selected site
+                if force_s is False:
+                    if abs(p - region_start) < SHOULDER_DISTANCE or abs(region_end - p) < SHOULDER_DISTANCE:
+                        found = False
+                        continue
+                    if region_start <= p <= region_end:
+                        found = False
+                        continue
                     found = True
-                if positions[start_idx] <= p <= positions[end_idx - 1]:
-                    if force_s is None or force_s:
-                        found = True
-                else:
-                    if force_s is None or not force_s:
-                        s = 0
-                        found = True
-                if found:
-                    tqdm.write(
-                        f"Sample {i}: pos {positions[start_idx]}-{positions[end_idx - 1]}, s={s}, p={p}"
-                        f"\n{start_idx}-{end_idx}, length {length}"
-                        # f"shapes {found_sample.shape}, {found_dist.shape}"
-                    )
+
+                # Containing: selected site must be in the middle SHOULDER_DISTANCE of the region
+                elif force_s:
+                    if not (region_start + SHOULDER_DISTANCE // 2 <= p <= region_end - SHOULDER_DISTANCE // 2):
+                        found = False
+                        continue
+                    if not (region_start <= p <= region_end):
+                        found = False
+                        continue
+                    found = True
+
+                # Neutral: any region is allowed
+                elif force_s is None:
+                    found = True
+                    
+                # avoid too small regions
+                if positions[end_idx - 1] - positions[start_idx] < 25000:
+                    found = False
+
+                tqdm.write(
+                    f"Sample {i}: pos {positions[start_idx]}-{positions[end_idx - 1]}, s={s}, p={p}"
+                    f"\n{start_idx}-{end_idx}, length {length}"
+                    f"\n  min: {positions[0]}, max: {positions[-1]}"
+                    # f"shapes {found_sample.shape}, {found_dist.shape}"
+                )
 
             assert found_sample.shape[1] > 0, (
                 f"Empty region for sample {i}, start {start_idx}, end {end_idx}, shape {sample.shape}"
@@ -91,7 +119,7 @@ def gen_sel(samps, dists, meta, meta_dict = {}, times=1, force_s=False, start_at
             result =  {
                 "input_ids": region,
                 "distances": distances,
-                "label": 1 if s > 0 else 0,
+                "label": (1 if s > 0 else 0) if binary else s,
                 "s": s,
             }
 
@@ -272,7 +300,7 @@ if __name__ == "__main__":
                     allsamples[neutrals][split],
                     alldistances[neutrals][split],
                     df[neutrals].iloc[split],
-                    times=5,
+                    times=10,
                     force_s=None,
                     meta_dict=meta_dict
                 ),
@@ -305,7 +333,7 @@ if __name__ == "__main__":
                     low_sel_samples[split],
                     low_sel_distances[split],
                     low_sel_df.iloc[split],
-                    times=5,
+                    times=10,
                     force_s=True,
                     meta_dict=meta_dict
                 ),
@@ -322,18 +350,6 @@ if __name__ == "__main__":
                 ),
                 features=features,
             )
-            
-            # shoulders_dataset = Dataset.from_generator(
-            #     lambda: gen_sel(
-            #         allsamples[selections][split],
-            #         alldistances[selections][split],
-            #         df[selections].iloc[split],
-            #         times=4,
-            #         force_s=False,
-            #         pos=125000
-            #     ),
-            #     features=features,
-            # )
             dataset = concatenate_datasets(
                 [
                     neutral_dataset,
@@ -354,7 +370,7 @@ if __name__ == "__main__":
             plt.savefig(f"figs/{which}_{name}_s_distribution.png") 
             plt.close()
 
-            dataset.save_to_disk(f"data/dataset/{which}_{name}_with_low_s/")
+            dataset.save_to_disk(f"data/dataset/{which}_{name}_with_low_s_middle/")
     elif mode == "runsel_pops":
         which = "combined"
         allsamples: np.ndarray = np.load(
