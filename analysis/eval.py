@@ -285,6 +285,20 @@ if __name__ == "__main__":
             save_path="figs/genome_correlation_tajimas_d_popf.png",
         )
 
-    # for genome, plot correlation with s coefficients
-    
+    # for genome, plot histogram of null distribution with line at obs
+    # only for popf-ft model
+    for (model_name, dataset_name), res in results.items():
+        if model_name != "popf-ft":
+            continue
+        if "obs" not in res or "null" not in res:
+            continue
+        obs = res["obs"]
+        p_emp = res["p_emp"]
+        null = res["null"]
+
+        genome_classification.plot_histogram_with_line(
+            null,
+            obs,
+            save_path=f"figs/{dataset_name}_null_distribution.png",
+        ) 
 

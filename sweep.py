@@ -82,7 +82,7 @@ def plot(out_fig_path, agg="mean"):
     from matplotlib import colormaps
 
     # Load sel.csv and bed
-    sel_df = pd.read_csv("SEL/sel.csv")
+    sel_df = pd.read_csv("data/SEL/sel.csv")
     
     populations = sel_df["Population"].unique()
     
@@ -99,7 +99,7 @@ def plot(out_fig_path, agg="mean"):
         region_end = row["End"]
         ax = axs[idx]
         for i, pop in enumerate(populations):
-            pred_path = f"SEL/{pop}_ftbin_preds.npz"
+            pred_path = f"preds/genome_{pop}_sel_popf-ft_region_plot_data.npz"
             data = np.load(pred_path)
             preds = torch.softmax(torch.tensor(data["preds"]), dim=-1)[:, 1].numpy()
             start_pos = data["start_pos"]
@@ -229,33 +229,40 @@ def plot_manhattan(preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YR
 
 def plot_region(preds_path, out_fig_path, window=0, label_df=None):
     data = np.load(preds_path)
-    # preds = torch.softmax(torch.tensor(data["preds"]), dim=-1)[:, 1].numpy()
-    preds = data["preds"][:, 1]
+    preds = data["preds"]
     ylbl = "pred. probability of selection"
     
     start_pos = data["start_pos"]
     end_pos = data["end_pos"]
 
     # Smooth predictions by averaging over surrounding predictions
-
     if isinstance(window, int) and window > 1:
         kernel = np.ones(window, dtype=float) / window
         preds = np.convolve(preds, kernel, mode="same")
 
-    plt.figure(figsize=(12, 6), layout="constrained")
-    plt.scatter(start_pos, preds, alpha=0.8)
+    label_df = label_df[label_df["Population"] == "CEU"].reset_index(drop=True)
+    fig, axs = plt.subplots(label_df.shape[0], 1, figsize=(12, 6 * label_df.shape[0]), layout="constrained")
 
-    if label_df is not None:
-        for _, r in label_df.iterrows():
-            x0 = r["start"]
-            x1 = r["end"]
-            plt.axvspan(x0, x1, color="purple", alpha=0.4)
-        plt.legend(["Predictions", "Selection region"])
+    for idx, r in label_df.iterrows():
+        x0 = r["Start"]
+        x1 = r["End"]
+        chrom = int(r["Chromosome"].replace("chr", ""))
+        mask = (data["chrom"] == chrom) & (start_pos >= x0 - 500000) & (end_pos <= x1 + 500000)
+        preds_region = preds[mask]
+        start_pos_region = start_pos[mask]
+        end_pos_region = end_pos[mask]
+        ax = axs[idx]
+        # Plot each prediction as a horizontal line from start_pos to end_pos
+        for s, e, p in zip(start_pos_region, end_pos_region, preds_region):
+            ax.plot([s, e], [p, p], color='C0', alpha=1.0, linewidth=5)
+        ax.axvspan(x0, x1, color="purple", alpha=0.4, label="Selection region")
+        ax.legend()
+        ax.set_xlabel('Position (bp)')
+        ax.set_ylabel(ylbl)
+        ax.set_title(f"{r['Chromosome']}:{x0}-{x1}")
+        ax.grid(True, alpha=0.3, linestyle='--')
+        ax.ticklabel_format(style='plain', axis='x', scilimits=(0,0))
 
-    plt.xlabel('Position (bp)')
-    plt.ylabel(ylbl)
-    plt.grid(True, alpha=0.3, linestyle='--')
-    plt.ticklabel_format(style='plain', axis='x', scilimits=(0,0))
     plt.savefig(out_fig_path, dpi=300)
 
 if __name__ == "__main__":

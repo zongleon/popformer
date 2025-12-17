@@ -103,6 +103,7 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
         return {
             "obs": obs,
             "p_emp": p_emp,
+            "null": null,
             "null_mean": null.mean(),
             "ci": ci,
             "fe": fe,
@@ -138,6 +139,7 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
         return {
             "obs": obs,
             "p_emp": p_emp,
+            "null": null,
             "null_mean": null.mean(),
             "ci": np.percentile(null, [2.5, 97.5]),
         }
@@ -317,6 +319,21 @@ def plot_boxplot(
         ax=ax,
     )
     ax.set_ylabel("pred. probability of selection")
+    ax.grid(True, axis="y", alpha=0.3, linestyle="--")
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+
+def plot_histogram_with_line(
+    y_pred, line_at, save_path="figs/lp_histline.png"
+):
+    fig, ax = plt.subplots(figsize=(10, 6), layout="constrained")
+    sns.histplot(
+        y_pred,
+        stat="density",
+        ax=ax,
+    )
+    ax.axvline(line_at, color="red", linestyle="--", label="")
     ax.grid(True, axis="y", alpha=0.3, linestyle="--")
     plt.savefig(save_path, dpi=300)
     plt.close()
