@@ -13,6 +13,7 @@ from sklearn.metrics import (
 )
 import matplotlib.pyplot as plt
 import seaborn as sns
+import theme
 
 class RandomClassificationEvaluator(BaseHFEvaluator):
     """
@@ -42,76 +43,21 @@ class RandomClassificationEvaluator(BaseHFEvaluator):
         precision = precision_score(self.labels, binary_preds)
         recall = recall_score(self.labels, binary_preds)
 
-        if hasattr(self, "s"):
-            # we'll store plotting data
-            s = self.s
-            lbls = self.labels
-            # accuracy vs s bins per model
-            bins = [
-                ("s=(0,0.02]", (0.0, 0.02)),
-                ("s=(0.02,0.04]", (0.02, 0.04)),
-                ("s=(0.04,0.06]", (0.04, 0.06)),
-                ("s=(0.06,0.08]", (0.06, 0.08)),
-                ("s=(0.08,0.1]", (0.08, 0.1)),
+        facet_vars = [
+            k for k in [
+                "s",
+                "growth",
+                "low_mut",
+                "has_dfe",
+                "onset_time",
+                "min_freq",
+                "goal_freq",
             ]
+            if hasattr(self, k)
+        ]
 
-            s_masks = []
-            for label, (a, b) in bins:
-                mask = ((s > a) & (s <= b)) | (s == 0)
-                if np.any(mask):
-                    s_masks.append(
-                        {
-                            "s_bin": label,
-                            "mask": mask,
-                        }
-                    )
-            
-            results["s_masks"] = s_masks
-
-
-        # --- AUROC vs s with faceting by other variables ---
-        facet_vars = {
-            k: v for k, v in {
-                "growth": "bin",
-                "low_mut": "binary", 
-                "has_dfe": "binary",
-                "onset_time": "zero_bin",
-                "min_freq": "zero_bin"
-            }.items() if hasattr(self, k)
-        }
-        
-        for var, typ in facet_vars.items():
-            # add masks for each facet variable
-            if typ == "binary":
-                facet_values = [0, 1]
-            elif typ == "bin":
-                # bin into 5 equal sized bins
-                var_values = getattr(self, var)
-                facet_values = pd.qcut(var_values, q=5, duplicates="drop").unique()
-                facet_values = sorted(facet_values, key=lambda x: x.left)
-            elif typ == "zero_bin":
-                # bin into a bin for 0 and 5 bins for non-zero values
-                var_values = getattr(self, var)
-                facet_values = [0] + sorted(list(pd.qcut(var_values[var_values != 0], q=5, duplicates="drop").unique()), key=lambda x: x.left)
-            else:
-                continue
-
-            facet_masks = []
-            for val in facet_values:
-                if typ == "binary":
-                    mask = getattr(self, var) == val
-                else:
-                    # masks for binned variables
-                    mask = pd.Series(getattr(self, var)).apply(lambda x: x in val if not val == 0 else x == 0).values
-
-                print(f"Facet variable '{var}' value '{val}' has {np.sum(mask)} samples.")
-                facet_masks.append(
-                    {
-                        "facet_value": val,
-                        "mask": mask,
-                    }
-                )
-            results[var + "_masks"] = facet_masks
+        for var in facet_vars:
+            results[var] = getattr(self, var)
 
         results.update({
             "model_name": self.model_name,
@@ -120,6 +66,8 @@ class RandomClassificationEvaluator(BaseHFEvaluator):
             "auprc": auprc,
             "precision": precision,
             "recall": recall,
+            "preds": pos_preds,
+            "trues": self.labels,
         })
 
         return results
@@ -143,7 +91,7 @@ def plot_roc_curves(y_trues, y_scores, model_names, colors=None, ax=None, add_ax
             y_score,
             name=model_name,
             ax=ax,
-            curve_kwargs=None if colors is None else {"color": colors[i]},
+            curve_kwargs={"color": theme.model_to_color[model_name]} if colors is None else {"color": colors[i]},
         )
 
     if not add_ax_labels:
@@ -177,7 +125,8 @@ def plot_pr_curves(y_trues, y_scores, model_names, colors=None, ax=None, add_ax_
             y_score,
             name=model_name,
             ax=ax,
-            color=None if colors is None else colors[i],
+            # curve_kwargs={"color": theme.model_to_color[model_name]} if colors is None else {"color": colors[i]},
+            color=theme.model_to_color[model_name] if colors is None else colors[i],
         )
     
     if not add_ax_labels:

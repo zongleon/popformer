@@ -3,6 +3,7 @@ import os
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
+from transformers import AutoConfig
 from popformer.models import PopformerForWindowClassification
 from popformer.collators import HaploSimpleDataCollator
 from datasets import load_from_disk
@@ -10,20 +11,29 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import pandas as pd
 
-def sweep(dataset, model, save_preds_path=None, save_features_path=None, subsample=None):
+
+def sweep(
+    dataset, model, save_preds_path=None, save_features_path=None, subsample=None
+):
     data = load_from_disk(dataset)
 
-    model = PopformerForWindowClassification.from_pretrained(
-        model,
-        torch_dtype=torch.float16
-    )
+    if model == "init":
+        conf = AutoConfig.from_pretrained("models/popf-small")
+        conf.torch_dtype = torch.float16
+        model = PopformerForWindowClassification(conf)
+    else:
+        model = PopformerForWindowClassification.from_pretrained(
+            model, torch_dtype=torch.float16
+        )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # device = "cpu"
     model.to(device)
     model.eval()
 
-    collator = HaploSimpleDataCollator(subsample=(subsample, subsample) if subsample else None,
-                                       subsample_type="diverse")
+    collator = HaploSimpleDataCollator(
+        subsample=(subsample, subsample) if subsample else None,
+        subsample_type="diverse",
+    )
 
     loader = DataLoader(
         data,
@@ -39,18 +49,19 @@ def sweep(dataset, model, save_preds_path=None, save_features_path=None, subsamp
             for k, v in batch.items():
                 if isinstance(v, torch.Tensor):
                     batch[k] = v.to(device, non_blocking=True)
-            
-            output = model(batch["input_ids"], 
-                            batch["distances"], 
-                            batch["attention_mask"],
-                            return_hidden_states=save_features_path is not None
-                            )
-            
+
+            output = model(
+                batch["input_ids"],
+                batch["distances"],
+                batch["attention_mask"],
+                return_hidden_states=save_features_path is not None,
+            )
+
             if save_preds_path:
                 preds.append(output["logits"].detach().cpu())
             if save_features_path:
                 # mean pool them
-                features.append(output["hidden_states"].mean(dim=(1,2)).detach().cpu())
+                features.append(output["hidden_states"].mean(dim=(1, 2)).detach().cpu())
 
     if "positions" in data.column_names:
         start_pos = [p[0] for p in data["positions"]]
@@ -68,14 +79,24 @@ def sweep(dataset, model, save_preds_path=None, save_features_path=None, subsamp
     if save_features_path:
         all_features = torch.cat(features, dim=0).numpy()
         print(f"Saving features of shape {all_features.shape} to {save_features_path}")
-        np.savez(save_features_path, features=all_features, start_pos=start_pos, end_pos=end_pos,
-                 chrom=chrom)
+        np.savez(
+            save_features_path,
+            features=all_features,
+            start_pos=start_pos,
+            end_pos=end_pos,
+            chrom=chrom,
+        )
 
     if save_preds_path:
         all_preds = torch.cat(preds, dim=0).numpy().squeeze()
         print(f"Saving predictions of shape {all_preds.shape} to {save_preds_path}")
-        np.savez(save_preds_path, preds=all_preds, start_pos=start_pos, end_pos=end_pos,
-                 chrom=chrom)
+        np.savez(
+            save_preds_path,
+            preds=all_preds,
+            start_pos=start_pos,
+            end_pos=end_pos,
+            chrom=chrom,
+        )
 
 
 def plot(out_fig_path, agg="mean"):
@@ -83,10 +104,10 @@ def plot(out_fig_path, agg="mean"):
 
     # Load sel.csv and bed
     sel_df = pd.read_csv("data/SEL/sel.csv")
-    
+
     populations = sel_df["Population"].unique()
-    
-    colors = colormaps['tab10']
+
+    colors = colormaps["tab10"]
     pop_colors = {pop: colors(i) for i, pop in enumerate(populations)}
 
     # For each region in bed, plot predictions for each population
@@ -120,20 +141,28 @@ def plot(out_fig_path, agg="mean"):
             region_preds = smooth_preds[mask]
             ax.scatter(region_pos, region_preds, alpha=1, color=colors(i), label=pop)
         ax.set_title(f"{row['Chromosome']}:{region_start}-{region_end}")
-        ax.set_xlabel('Position (bp)')
-        ax.set_ylabel('p(selection)')
-        ax.grid(True, alpha=0.3, linestyle='--')
-        ax.ticklabel_format(style='plain', axis='x', scilimits=(0,0))
+        ax.set_xlabel("Position (bp)")
+        ax.set_ylabel("p(selection)")
+        ax.grid(True, alpha=0.3, linestyle="--")
+        ax.ticklabel_format(style="plain", axis="x", scilimits=(0, 0))
         # Highlight sel region
         sel_mask = (sel_df["Start"] >= region_start) & (sel_df["End"] <= region_end)
         for _, sel_row in sel_df[sel_mask].iterrows():
-            ax.axvspan(sel_row["Start"], sel_row["End"], color=pop_colors[sel_row["Population"]], 
-                       alpha=0.2, label=f'Selection region, {sel_row["Population"]}')
+            ax.axvspan(
+                sel_row["Start"],
+                sel_row["End"],
+                color=pop_colors[sel_row["Population"]],
+                alpha=0.2,
+                label=f"Selection region, {sel_row['Population']}",
+            )
         ax.legend(loc="upper right")
     plt.tight_layout()
-    plt.savefig(out_fig_path, dpi=300, bbox_inches='tight')
+    plt.savefig(out_fig_path, dpi=300, bbox_inches="tight")
 
-def plot_manhattan(preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YRI"), window=0):
+
+def plot_manhattan(
+    preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YRI"), window=0
+):
     """Plot genome-wide predictions in a Manhattan plot style for each population.
     - out_fig_path: path to save the figure
     - populations: iterable of population codes matching saved npz files
@@ -163,12 +192,15 @@ def plot_manhattan(preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YR
 
     # One subplot per population
     n_rows = len(populations)
-    fig, axs = plt.subplots(n_rows, 1, figsize=(20, 3 * n_rows), sharex=True, layout="constrained")
+    fig, axs = plt.subplots(
+        n_rows, 1, figsize=(20, 3 * n_rows), sharex=True, layout="constrained"
+    )
     if n_rows == 1:
         axs = [axs]
 
     # Load selection regions
     sel_df = pd.read_csv("data/SEL/sel.csv")
+    access_mask = np.load(preds_path_stub.format(pop="CAL"))["preds"] >= 0.8
 
     for i, (ax, pop) in enumerate(zip(axs, populations)):
         data = np.load(preds_path_stub.format(pop=pop))
@@ -176,11 +208,13 @@ def plot_manhattan(preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YR
         # probs = torch.softmax(logits, dim=-1)[:, 1].numpy()
         # probs = data["preds"]
         probs = data["preds"]  # [N,]
+
         if probs.ndim == 2:
             probs = torch.softmax(torch.tensor(probs), dim=-1)[:, 1].numpy()
         if isinstance(window, int) and window > 1:
             kernel = np.ones(window, dtype=float) / window
             probs = np.convolve(probs, kernel, mode="same")[window:-window]
+
         # min in window
         # if isinstance(window, int) and window > 1:
         #     padded = np.pad(probs, (window//2, window-1-window//2), mode='edge')
@@ -188,19 +222,47 @@ def plot_manhattan(preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YR
         #     for j in range(len(probs)):
         #         smooth_probs[j] = np.min(padded[j:j+window])
         #     probs = smooth_probs
-        chrom = data["chrom"][window:-window] if isinstance(window, int) and window > 1 else data["chrom"]
-        starts = data["start_pos"][window:-window] if isinstance(window, int) and window > 1 else data["start_pos"]
+        chrom = (
+            data["chrom"][window:-window]
+            if isinstance(window, int) and window > 1
+            else data["chrom"]
+        )
+        starts = (
+            data["start_pos"][window:-window]
+            if isinstance(window, int) and window > 1
+            else data["start_pos"]
+        )
+        # probs = (
+        #     probs[window:-window] if isinstance(window, int) and window > 1 else probs
+        # )
+        access_mask = (
+            access_mask[window:-window]
+            if isinstance(window, int) and window > 1
+            else access_mask
+        )
+
+        probs = probs[access_mask]
 
         for c in chroms:
-            mask = (chrom == c)
+            mask = chrom[access_mask] == c
             if not np.any(mask):
                 continue
-            x = starts[mask] + offsets[c]
+            x = starts[access_mask][mask] + offsets[c]
             y = probs[mask]
-            ax.scatter(x, y, s=5, color=colors((c - 1) % 2 + i * 2), alpha=0.7, linewidths=0, rasterized=True)
+            ax.scatter(
+                x,
+                y,
+                s=5,
+                color=colors((c - 1) % 2 + i * 2),
+                alpha=0.7,
+                linewidths=0,
+                rasterized=True,
+            )
 
         # Overlay known selected regions for this population
         added_label = False
+        if pop == "CAL":
+            pop = "CEU"
         sub = sel_df[sel_df["Population"] == pop]
         for _, r in sub.iterrows():
             c_raw = int(r["Chromosome"].replace("chr", ""))
@@ -208,17 +270,21 @@ def plot_manhattan(preds_path_stub, out_fig_path, populations=("CEU", "CHB", "YR
                 continue
             x0 = offsets[c_raw] + float(r["Start"])
             x1 = offsets[c_raw] + float(r["End"])
-            ax.axvspan(x0, x1, color="purple", # colors(i * 2), 
-                       alpha=0.4,
-                       label=("Selection region" if not added_label else None))
-            added_label=True
+            ax.axvspan(
+                x0,
+                x1,
+                color="purple",  # colors(i * 2),
+                alpha=0.4,
+                label=("Selection region" if not added_label else None),
+            )
+            added_label = True
 
         # ax.set_ylim(0, 1)
         ax.set_ylabel("p(selection)")
         ax.set_title(f"{pop}")
         ax.grid(True, axis="y", alpha=0.3, linestyle="--")
 
-    axs[0].legend(loc="upper right" )
+    axs[0].legend(loc="upper right")
     axs[-1].set_xticks(xticks)
     axs[-1].set_xticklabels(xticklabels)
     axs[-1].set_xlabel("Chromosome")
@@ -231,7 +297,7 @@ def plot_region(preds_path, out_fig_path, window=0, label_df=None):
     data = np.load(preds_path)
     preds = data["preds"]
     ylbl = "pred. probability of selection"
-    
+
     start_pos = data["start_pos"]
     end_pos = data["end_pos"]
 
@@ -241,42 +307,57 @@ def plot_region(preds_path, out_fig_path, window=0, label_df=None):
         preds = np.convolve(preds, kernel, mode="same")
 
     label_df = label_df[label_df["Population"] == "CEU"].reset_index(drop=True)
-    fig, axs = plt.subplots(label_df.shape[0], 1, figsize=(12, 6 * label_df.shape[0]), layout="constrained")
+    fig, axs = plt.subplots(
+        label_df.shape[0], 1, figsize=(12, 6 * label_df.shape[0]), layout="constrained"
+    )
 
     for idx, r in label_df.iterrows():
         x0 = r["Start"]
         x1 = r["End"]
         chrom = int(r["Chromosome"].replace("chr", ""))
-        mask = (data["chrom"] == chrom) & (start_pos >= x0 - 500000) & (end_pos <= x1 + 500000)
+        mask = (
+            (data["chrom"] == chrom)
+            & (start_pos >= x0 - 500000)
+            & (end_pos <= x1 + 500000)
+        )
         preds_region = preds[mask]
         start_pos_region = start_pos[mask]
         end_pos_region = end_pos[mask]
         ax = axs[idx]
         # Plot each prediction as a horizontal line from start_pos to end_pos
         for s, e, p in zip(start_pos_region, end_pos_region, preds_region):
-            ax.plot([s, e], [p, p], color='C0', alpha=1.0, linewidth=5)
+            ax.plot([s, e], [p, p], color="C0", alpha=1.0, linewidth=5)
         ax.axvspan(x0, x1, color="purple", alpha=0.4, label="Selection region")
         ax.legend()
-        ax.set_xlabel('Position (bp)')
+        ax.set_xlabel("Position (bp)")
         ax.set_ylabel(ylbl)
         ax.set_title(f"{r['Chromosome']}:{x0}-{x1}")
-        ax.grid(True, alpha=0.3, linestyle='--')
-        ax.ticklabel_format(style='plain', axis='x', scilimits=(0,0))
+        ax.grid(True, alpha=0.3, linestyle="--")
+        ax.ticklabel_format(style="plain", axis="x", scilimits=(0, 0))
 
     plt.savefig(out_fig_path, dpi=300)
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data', type=str, help='Path to dataset')
-    parser.add_argument('--model', type=str, help='Path to model')
-    parser.add_argument('--save_features', type=str, help='Path for saving features')
-    parser.add_argument('--save_logits', type=str, help='Path for saving logits')
-    parser.add_argument('--logits_path', type=str, help='Path for loading logits')
-    parser.add_argument('--plot_preds', type=str, help='Path to save the Manhattan plot')
-    parser.add_argument('--plot_region', type=str, help='Path to save the region plot')
-    parser.add_argument('--region_labels', type=str, help='CSV file with region labels for region plot')
-    parser.add_argument('--smooth_window', type=int, default=7, help='Smoothing window size')
-    parser.add_argument('--subsample', type=int, default=None, help='Subsample size for collator')
+    parser.add_argument("--data", type=str, help="Path to dataset")
+    parser.add_argument("--model", type=str, help="Path to model")
+    parser.add_argument("--save_features", type=str, help="Path for saving features")
+    parser.add_argument("--save_logits", type=str, help="Path for saving logits")
+    parser.add_argument("--logits_path", type=str, help="Path for loading logits")
+    parser.add_argument(
+        "--plot_preds", type=str, help="Path to save the Manhattan plot"
+    )
+    parser.add_argument("--plot_region", type=str, help="Path to save the region plot")
+    parser.add_argument(
+        "--region_labels", type=str, help="CSV file with region labels for region plot"
+    )
+    parser.add_argument(
+        "--smooth_window", type=int, default=7, help="Smoothing window size"
+    )
+    parser.add_argument(
+        "--subsample", type=int, default=None, help="Subsample size for collator"
+    )
 
     args = parser.parse_args()
 
@@ -286,18 +367,32 @@ if __name__ == "__main__":
 
     if args.save_logits or args.save_features:
         preds_path = args.save_logits
-        sweep(data, model, args.save_logits, args.save_features, subsample=args.subsample)
-    
+        sweep(
+            data, model, args.save_logits, args.save_features, subsample=args.subsample
+        )
+
     if args.plot_preds:
         preds_path = args.logits_path if args.logits_path else preds_path
-        if not os.path.exists(preds_path):
-            raise ValueError(f"Predictions path {preds_path} does not exist. Run with --save_logits first or specify with --logits_path.")
-        plot_manhattan(preds_path, args.plot_preds, populations=("CEU",), window=args.smooth_window)
-    
+        if not os.path.exists(preds_path) and "{pop}" not in preds_path:
+            raise ValueError(
+                f"Predictions path {preds_path} does not exist. Run with --save_logits first or specify with --logits_path."
+            )
+        plot_manhattan(
+            preds_path,
+            args.plot_preds,
+            # populations=["CEU", "YRI", "CHB"],
+            populations=["CEU"],
+            window=args.smooth_window,
+        )
+
     if args.plot_region:
         preds_path = args.logits_path if args.logits_path else preds_path
         if not os.path.exists(preds_path):
-            raise ValueError(f"Predictions path {preds_path} does not exist. Run with --save_logits first or specify with --logits_path.")
+            raise ValueError(
+                f"Predictions path {preds_path} does not exist. Run with --save_logits first or specify with --logits_path."
+            )
         # Load selection regions
         sel_df = pd.read_csv(args.region_labels)
-        plot_region(preds_path, args.plot_region, window=args.smooth_window, label_df=sel_df)
+        plot_region(
+            preds_path, args.plot_region, window=args.smooth_window, label_df=sel_df
+        )

@@ -5,41 +5,7 @@ from tqdm import tqdm
 import allel
 
 INPUT_VCF = "data/imputation/raw/KHV.chr20.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.vcf.gz"
-INPUT2_VCF = "/bigdata/smathieson/1000g-share/VCF/ALL.chr20.snps.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.vcf.gz"
 OUTPUT_DIR = "data/imputation/masked/KHV_{ratio}_{seed}.vcf.gz"
-OUTPUT2_DIR = "data/imputation/masked/KHV_{seed}.vcf.gz"
-
-
-def infinium_mask(input_vcf, chr):
-    # build 37 for these infinium arrays
-    # bmp = "IMP/InfiniumExome-24v1-1_A1.csv"
-    bmp = "data/imputation/raw/InfiniumOmniExpress-24v1-3_A1.csv"
-    df: pd.DataFrame = pd.read_csv(
-        bmp,
-        usecols=["Name", "Chr", "MapInfo"],
-        skiprows=7,
-        dtype={"Name": str, "Chr": str, "MapInfo": pd.Int32Dtype()},
-    )
-
-    df = df.dropna(subset=["MapInfo"])
-
-    df = df[df["Chr"] == chr]
-
-    df = df[["Chr", "MapInfo"]]
-    df = df.rename(columns={"Chr": "chrom", "MapInfo": "pos"})
-
-    # only keep positions from the vcf that aren't in the df
-    # chrom, pos = [], []
-    # for idx, v in enumerate(VCF(input_vcf)):
-    #     if str(v.CHROM) != chr:
-    #         continue
-    #     if v.POS not in df["pos"].values:
-    #         chrom.append(v.CHROM)
-    #         pos.append(v.POS)
-
-    # df = pd.DataFrame({"chrom": chrom, "pos": pos})
-
-    return df
 
 
 def random_mask(input_vcf, mask_ratio, seed=0):
@@ -93,54 +59,32 @@ def apply_mask(
     # Validate samples and split
     vcf_all = VCF(input_vcf)
 
-    OLD = True
-    if OLD:
-        if max_samples is not None:
-            sample_idxs = list(range(len(vcf_all.samples)))
-            rng.shuffle(sample_idxs)
-            sample_idxs = sample_idxs[:max_samples]
-            vcf_all.set_samples([vcf_all.samples[i] for i in sample_idxs])
-        all_samples = list(vcf_all.samples)
-        n_samples = len(all_samples)
-        if ref_ratio < 1:
-            ref_set = list(rng.choice(n_samples, int(ref_ratio * n_samples), replace=False))
-        elif type(ref_ratio) is int:
-            ref_set = list(rng.choice(n_samples, ref_ratio, replace=False))
-        else:
-            raise ValueError(
-                "ref_ratio should be a float (ratio) or an int (number of ref samples)"
-            )
-
-        ref_set = [all_samples[x] for x in ref_set]
-        target_samples = [s for s in all_samples if s not in ref_set]
-
-        if type(ref_ratio) is int:
-            target_samples = target_samples[:ref_ratio]
-        # print(target_samples)
-        # print(all_samples)
-
-        print(len(list(ref_set)))
-        print(len(target_samples))
+    if max_samples is not None:
+        sample_idxs = list(range(len(vcf_all.samples)))
+        rng.shuffle(sample_idxs)
+        sample_idxs = sample_idxs[:max_samples]
+        vcf_all.set_samples([vcf_all.samples[i] for i in sample_idxs])
+    all_samples = list(vcf_all.samples)
+    n_samples = len(all_samples)
+    if ref_ratio < 1:
+        ref_set = list(rng.choice(n_samples, int(ref_ratio * n_samples), replace=False))
+    elif type(ref_ratio) is int:
+        ref_set = list(rng.choice(n_samples, ref_ratio, replace=False))
     else:
-        # read sample table
-        ped = pd.read_csv("data/imputation/raw/20130606_g1k.ped", sep="\t")
-        in_vcf = set(vcf_all.samples)
-        
-        # target is 2 random KHV, 2 random CHS, 2 CDX
-        target_samples = []
-        for pop in ["KHV", "CHS", "CDX"]:
-            pop_samples = ped[ped["Population"] == pop]["Individual ID"].tolist()
-            pop_samples = [s for s in pop_samples if s in in_vcf]
-            rng.shuffle(pop_samples)
-            target_samples.extend(pop_samples[:10])
-        
-        # ref_set are 10 random KHV not in target, 10 CHS, 10 CDX
-        ref_set = []
-        for pop in ["KHV", "CHS", "CDX"]:
-            pop_samples = ped[ped["Population"] == pop]["Individual ID"].tolist()
-            pop_samples = [s for s in pop_samples if s not in target_samples and s in in_vcf]
-            rng.shuffle(pop_samples)
-            ref_set.extend(pop_samples[:2])
+        raise ValueError(
+            "ref_ratio should be a float (ratio) or an int (number of ref samples)"
+        )
+
+    ref_set = [all_samples[x] for x in ref_set]
+    target_samples = [s for s in all_samples if s not in ref_set]
+
+    if type(ref_ratio) is int:
+        target_samples = target_samples[:ref_ratio]
+    # print(target_samples)
+    # print(all_samples)
+
+    print(len(list(ref_set)))
+    print(len(target_samples))
 
     # Prepare per-group VCF readers with sample subsetting
     vcf_ref = VCF(input_vcf)
@@ -218,26 +162,20 @@ def convert_vcf(vcf_filename):
 
 if __name__ == "__main__":
     for seed in range(3):
-        # mask_df = infinium_mask(INPUT_VCF, "20")
-        # output_vcf = OUTPUT2_DIR.format(seed=seed)
-        # ref_vcf, tgt_vcf = apply_mask(
-        #     INPUT_VCF,
-        #     mask_df,
-        #     output_vcf,
-        #     ref_ratio=32,
-        #     strategy="remove",
-        #     seed=seed,
-        #     max_samples=None,
-        # )
-
-        # convert_vcf(ref_vcf)
-        # convert_vcf(tgt_vcf)
-
         for ratio in [0.2, 0.4, 0.6, 0.8]:
             mask_df = random_mask(INPUT_VCF, ratio, seed=seed)
-            print(f"Generated random mask with {mask_df.shape[0]} positions for ratio {ratio}")
+            print(
+                f"Generated random mask with {mask_df.shape[0]} positions for ratio {ratio}"
+            )
 
-            output_vcf = OUTPUT_DIR.format(ratio=int(ratio*100), seed=seed)
-            ref_vcf, tgt_vcf = apply_mask(INPUT_VCF, mask_df, output_vcf, ref_ratio=32, strategy="remove", seed=seed)
+            output_vcf = OUTPUT_DIR.format(ratio=int(ratio * 100), seed=seed)
+            ref_vcf, tgt_vcf = apply_mask(
+                INPUT_VCF,
+                mask_df,
+                output_vcf,
+                ref_ratio=32,
+                strategy="remove",
+                seed=seed,
+            )
             convert_vcf(ref_vcf)
             convert_vcf(tgt_vcf)

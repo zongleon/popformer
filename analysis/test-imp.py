@@ -13,8 +13,8 @@ from cyvcf2 import VCF
 import subprocess
 import time
 import seaborn as sns
+import theme
 
-plt.style.use("seaborn-v0_8-talk")
 
 def test_masked_lm(model_path, dataset):
     print("=" * 30)
@@ -81,7 +81,7 @@ def test_masked_lm(model_path, dataset):
     # ax2.imshow(color(gt_img[0]), aspect='auto', cmap='Greys', interpolation="none")
     # ax2.set_title("ground truth")
 
-    plt.savefig("figs/imp_testimp.png", dpi=300, bbox_inches="tight")
+    plt.savefig("figs/imputatoin/example.png", dpi=300, bbox_inches="tight")
 
 
 def test(model, dataset):
@@ -413,7 +413,7 @@ def run(seeds, mask_ratios, models):
             dataset = parse_files_imputation(ref_vcf, tgt_vcf, tokenizer)
 
             # Run predictions
-            model = "models/old/popf-small"
+            model = "models/popf-small"
 
             if seed == seeds[0]:
                 test_masked_lm(model, dataset)
@@ -476,11 +476,15 @@ def run(seeds, mask_ratios, models):
             )
 
             # Store results
-            results[mr]["popformer-base"].append((model_r, model_r2, model_err, model_time))
+            results[mr]["popformer-base"].append(
+                (model_r, model_r2, model_err, model_time)
+            )
             # results["popformer-large"].append(
             #     (model_r_large, model_r2_large, model_err_large, model_time_large)
             # )
-            results[mr]["impute5"].append((impute_r, impute_r2, impute_err, impute_time))
+            results[mr]["impute5"].append(
+                (impute_r, impute_r2, impute_err, impute_time)
+            )
             results[mr]["baseline1"].append(
                 (baseline1_r, baseline1_r2, baseline1_err, baseline1_time)
             )
@@ -500,6 +504,7 @@ def run(seeds, mask_ratios, models):
             # )
             # print(f"Baseline2: r={baseline2_r:.4f}, r2={baseline2_r2:.4f}, err={baseline2_err:.4f}, time={baseline2_time:.2f}s")
     return results
+
 
 if __name__ == "__main__":
     RUN = False
@@ -534,23 +539,35 @@ if __name__ == "__main__":
 
         df_plot = pd.DataFrame(plot_data)
         df_plot.to_csv("imputation_results_summary.csv", index=False)
-    else: 
+    else:
         df_plot = pd.read_csv("imputation_results_summary.csv")
-    
+
     for metric in ["Error Rate", "r2"]:
         df_plot_remove_col = df_plot[df_plot["Method"] != "column freq baseline"]
+        df_plot_remove_col["Method"] = df_plot_remove_col["Method"].replace(
+            {
+                "impute5": "IMPUTE 5",
+                "nearest neighbor baseline": "Nearest Neighbor",
+                "popformer-base": "popformer",
+            },
+        )
         plt.figure(figsize=(8, 6))
         sns.pointplot(
             data=df_plot_remove_col,
             x="Mask Ratio",
             y=metric,
             hue="Method",
+            palette=theme.model_to_color,
             errorbar=("sd"),
         )
+        if metric == "Error Rate":
+            plt.ylim(0, 0.1)
+            sns.despine()
+        if metric == "r2":
+            plt.ylim(0.75, 1)
+            sns.despine(top=False)
         plt.tight_layout()
-        plt.savefig(f"figs/imp_{metric.replace(' ', '_').lower()}.png", dpi=300)
-
-
+        plt.savefig(f"figs/imputation/{metric.replace(' ', '_').lower()}.png", dpi=300)
 
     # Print summary tables
     print(f"\n{'=' * 80}")

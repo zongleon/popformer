@@ -60,9 +60,11 @@ class Tokenizer:
         eos_vec = np.full((n_haps, 1), self.EOS_TOKEN)
         zeros_vec = np.zeros((n_haps, 1))
 
-        haps = np.hstack([bos_vec, sample[:, :n_snps, 0], eos_vec]).astype(np.int8)
-        
-        dists = np.hstack([zeros_vec, sample[:, :n_snps, 1], zeros_vec])
+        haps = np.hstack([bos_vec, sample[:n_haps, :n_snps, 0], eos_vec]).astype(
+            np.int8
+        )
+
+        dists = np.hstack([zeros_vec, sample[:n_haps, :n_snps, 1], zeros_vec])
         # max_dist = np.max(np.abs(dists))
         # print(f"Distances max element: {max_dist}")
         # print(f"Distances shape: {dists.shape}, dtype: {dists.dtype}")
@@ -90,6 +92,7 @@ def make_features(
     include_snp_pos: bool = False,
     include_major_minor: bool = False,
     include_s: bool = False,
+    include_shoulder: bool = False,
     extra_features: dict[str, str] = None,  # <-- new parameter
 ):
     features = {
@@ -107,6 +110,8 @@ def make_features(
         features["chrom"] = Value("int8")
     if include_s:
         features["s"] = Value("float16")
+    if include_shoulder:
+        features["shoulder"] = Value("int8")
     if include_major_minor:
         features["major_allele_flipped"] = List(Value("bool"))
 
@@ -212,7 +217,10 @@ def trees_to_dataset(
         # process tree
         ts = tskit.load(filepath)
         gt_matrix = ts.genotype_matrix()
-        is_biallelic = [sum(gt_matrix[i]) == list(gt_matrix[i]).count(1) for i in range(len(gt_matrix))]
+        is_biallelic = [
+            sum(gt_matrix[i]) == list(gt_matrix[i]).count(1)
+            for i in range(len(gt_matrix))
+        ]
         gt_matrix = gt_matrix[is_biallelic]
         num_snps = gt_matrix.shape[0]
         positions, dist_vec = get_pos_and_dist_vec(ts, num_snps, is_biallelic)
@@ -252,8 +260,9 @@ def trees_to_dataset(
     return Dataset.from_generator(gen, features=features)
 
 
-
-def parse_files_imputation(ref_file: str, tgt_file: str, tokenizer: Tokenizer, bed_file = None) -> Dataset:
+def parse_files_imputation(
+    ref_file: str, tgt_file: str, tokenizer: Tokenizer, bed_file=None
+) -> Dataset:
     samples_list = []
     it = RealDataRandomIterator(ref_file, bed_file)
     it2 = RealDataRandomIterator(tgt_file, bed_file)
@@ -272,12 +281,15 @@ def parse_files_imputation(ref_file: str, tgt_file: str, tokenizer: Tokenizer, b
                 # save if not first
                 # region = shuffle(region, n)
                 dist_vec = [0] + [
-                    (positions[j + 1] - positions[j])
-                    for j in range(len(positions) - 1)
+                    (positions[j + 1] - positions[j]) for j in range(len(positions) - 1)
                 ]
 
                 region, flipped = process_gt_dist(
-                    region, dist_vec, tokenizer.num_snps, region_len=False, ret_major_minor=True
+                    region,
+                    dist_vec,
+                    tokenizer.num_snps,
+                    region_len=False,
+                    ret_major_minor=True,
                 )
 
                 region, distances = tokenizer(region)
@@ -287,7 +299,7 @@ def parse_files_imputation(ref_file: str, tgt_file: str, tokenizer: Tokenizer, b
                         "input_ids": region,
                         "distances": distances,
                         "positions": positions,
-                        "chrom": 0, # TODO
+                        "chrom": 0,  # TODO
                         "major_allele_flipped": flipped,
                     }
                 )
@@ -321,8 +333,7 @@ def parse_files_imputation(ref_file: str, tgt_file: str, tokenizer: Tokenizer, b
     # Handle the last region if it wasn't saved
     if region is not None and positions is not None:
         dist_vec = [0] + [
-            (positions[j + 1] - positions[j])
-            for j in range(len(positions) - 1)
+            (positions[j + 1] - positions[j]) for j in range(len(positions) - 1)
         ]
         region, flipped = process_gt_dist(
             region, dist_vec, tokenizer.num_snps, region_len=False, ret_major_minor=True
@@ -333,7 +344,7 @@ def parse_files_imputation(ref_file: str, tgt_file: str, tokenizer: Tokenizer, b
                 "input_ids": region,
                 "distances": distances,
                 "positions": positions,
-                "chrom": 0, # TODO
+                "chrom": 0,  # TODO
                 "major_allele_flipped": flipped,
             }
         )
@@ -342,6 +353,7 @@ def parse_files_imputation(ref_file: str, tgt_file: str, tokenizer: Tokenizer, b
     # Save tokenized data
     dataset = Dataset.from_list(samples_list, features=features)
     return dataset
+
 
 def parse_file(filepath, args) -> Dataset:
     if os.path.isdir(filepath):
@@ -356,10 +368,15 @@ def parse_file(filepath, args) -> Dataset:
 
     tokenizer = Tokenizer(max_haps=args.max_haps, num_snps=args.num_snps)
     if ext == ".h5":
-        return hdf5_to_dataset(filepath, tokenizer, 
-                               args.window_jump, args.window_size, 
-                               chrom=args.chrom, bed_file=args.bed_file, 
-                               frac_callable=args.frac_callable)
+        return hdf5_to_dataset(
+            filepath,
+            tokenizer,
+            args.window_jump,
+            args.window_size,
+            chrom=args.chrom,
+            bed_file=args.bed_file,
+            frac_callable=args.frac_callable,
+        )
     elif ext == ".trees":
         return trees_to_dataset(filepath, tokenizer, args.window_jump, args.window_size)
     else:

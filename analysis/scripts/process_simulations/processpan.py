@@ -12,7 +12,7 @@ from popformer.dataset import find_nonzero_block_cols
 MAX = 5000
 
 FILE = "{pop}_{typ}{seed}.trees"
-MAX_HAPS = 256
+MAX_HAPS = 198
 MAX_SNPS = 2048
 
 def main(d, out, pop="human"):
@@ -21,6 +21,8 @@ def main(d, out, pop="human"):
     metadata = os.path.join(d, "sweep_metadata.csv")
     metadata2 = os.path.join(d, "neutral_metadata.csv")
     os.makedirs(out, exist_ok=True)
+
+    out_name = os.path.basename(out)
 
     # input metadat
     df = pd.read_csv(metadata)
@@ -33,22 +35,12 @@ def main(d, out, pop="human"):
     df = df.iloc[:n_seeds]
 
     # update metadata
-    neutral = True
-    try:
-        neutral_df = pd.read_csv(metadata2).iloc[:n_seeds]
-    except FileNotFoundError:
-        neutral = False
-        
-    total = n_seeds * 2 if neutral else n_seeds
-    if neutral:
-        neutrals = [(-1, 0, 0, 0) for _ in range(n_seeds)]
-        neutral_df = pd.concat([neutral_df, pd.DataFrame(neutrals, columns=df.columns[-4:])], axis=1)
-        df = pd.concat([df, neutral_df])
-        df["sim"] = "Sept25"
-        df["pop"] = "pan_3" if "pan_3" in out else "pan_4"
-    
-    print(f"\nLoaded metadata: {n_seeds} seeds ({total} total)")
-    print(f"\tColumns: {df.columns.tolist()}")
+    neutrals = [(-1, 0, 0, 0) for _ in range(n_seeds)]
+    neutral_df = pd.read_csv(metadata2).iloc[:n_seeds]
+    neutral_df = pd.concat([neutral_df, pd.DataFrame(neutrals, columns=df.columns[-4:])], axis=1)
+    df = pd.concat([df, neutral_df])
+    df["sim"] = "Sept25"
+    df["pop"] = out_name
 
     seeds = {}
     if "pan_3" in out:
@@ -67,8 +59,6 @@ def main(d, out, pop="human"):
     pbar = tqdm(total=total)
 
     for subdir in ["sweep", "neutral"]:
-        if subdir == "neutral" and not neutral:
-            continue
         for seed in seeds[subdir]:
             pbar.update(1)
             filename = os.path.join(d, subdir, FILE.format(pop=pop, 

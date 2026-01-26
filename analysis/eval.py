@@ -2,7 +2,13 @@ import numpy as np
 import os
 import pandas as pd
 from evaluation.core import BaseEvaluator
-from evaluation.models import popformer, popformer_lp, fasternn, schrider_resnet, summary_stat
+from evaluation.models import (
+    popformer,
+    popformer_lp,
+    fasternn,
+    schrider_resnet,
+    summary_stat,
+)
 from evaluation.evaluators import random_classification, genome_classification
 
 import matplotlib.pyplot as plt
@@ -13,52 +19,58 @@ FORCE = False
 
 if __name__ == "__main__":
     dataset_paths = [
-        # "data/dataset/pan_4_test_balanced",
-        "data/dataset/pan_4_test_with_low_s",
+        # "data/dataset/CEU_new_test",
+        # "data/dataset/pan_4_test_with_low_s",
+        "data/dataset/pan_test_has_dfe_1",
+        "data/dataset/pan_test_has_dfe_0",
+        # "data/dataset/pan_4_test_low_mut_0",
+        # "data/dataset/pan_4_test_low_mut_1",
+        # "data/dataset/pan_4_test_has_dfe_0",
+        # "data/dataset/pan_4_test_has_dfe_1",
+        "data/dataset/pan_4_test",
         "data/dataset/pan_3_demoid-0_balanced",
         "data/dataset/pan_3_demoid-1_balanced",
         "data/dataset/len200_ghist_const1",
         "data/dataset/len200_ghist_const2",
         "data/dataset/genome_CEU",
-        # "data/dataset/genome_CEU_chr1",
-        # "data/dataset/genome_CEU_50000_thresh_50"
-        # "data/dataset/genome_CEU_100000"
-        # "data/dataset/ghist_multisweep",
-        # "data/dataset/ghist_multisweep.growth_bg",
-        # "data/dataset/ghist_singlesweep",
-        # "data/dataset/ghist_singlesweep.growth_bg",
-        # "data/dataset/ghist_multisweep_final",
-        # "data/dataset/ghist_multisweep.growth_bg_final",
-        # "data/dataset/ghist_singlesweep_final",
-        # "data/dataset/ghist_singlesweep.growth_bg_final",
+        # "data/dataset/genome_YRI",
+        # "data/dataset/genome_CHB",
     ]
     models = [
         popformer.PopformerModel(
-            "models/selbin",
-            "popf-ft",
+            "models/selbin-pt-has_dfe_0",
+            "popformer",
+            subsample=(64, 64),
+            subsample_type="diverse",
+        ),
+        popformer.PopformerModel(
+            "models/selbin-ft-has_dfe_0",
+            "popformer-ft",
             subsample=(64, 64),
             subsample_type="diverse",
         ),
         popformer_lp.PopformerLPModel(
             "models/popf-small",
-            "models/lp/pan_4_train_with_low_s_popf-small_lp.pkl",
-            "popf-lp",
+            "models/lp/pan_train_has_dfe_0_popf-small_lp.pkl",
+            "popformer-lp",
             subsample=(64, 64),
             subsample_type="diverse",
         ),
-        fasternn.FasterNNModel("models/fasternn/fasternn.pt", "FASTER-NN"),
+        fasternn.FasterNNModel(
+            "models/fasternn/fasternn_pan_train_has_dfe_0.pt", "FASTER-NN"
+        ),
         schrider_resnet.SchriderResnet(
-            model_path="models/schrider_resnet/resnet.pt",
+            model_path="models/schrider_resnet/resnet_pan_train_has_dfe_0.pt",
             model_name="resnet34",
         ),
-        # summary_stat.PopformerModel(
-        #     model_name="pi",
-        #     summary_stat="pi",
-        # ),
         summary_stat.PopformerModel(
             model_name="tajimas_d",
             summary_stat="tajimas_d",
         ),
+        # summary_stat.PopformerModel(
+        #     model_name="tajimas_d",
+        #     summary_stat="tajimas_d",
+        # ),
     ]
     evaluators: list[BaseEvaluator] = []
 
@@ -67,14 +79,23 @@ if __name__ == "__main__":
         if "ghist" in dataset_path or "genome" in dataset_path:
             if "genome" in dataset_path:
                 known_paths = ["data/SEL/sel.csv", "data/SEL/reichsel.csv"]
-                ds_name = [os.path.basename(dataset_path) + "_" + os.path.basename(kp).split(".")[0] for kp in known_paths]
+                ds_name = [
+                    os.path.basename(dataset_path)
+                    + "_"
+                    + os.path.basename(kp).split(".")[0]
+                    for kp in known_paths
+                ]
             else:
-                known_paths = [f"data/matrices/bigregions/{os.path.basename(dataset_path)}.csv"]
+                known_paths = [
+                    f"data/matrices/bigregions/{os.path.basename(dataset_path)}.csv"
+                ]
                 ds_name = [None]
             for known_region_path in known_paths:
                 evaluator = genome_classification.GenomeClassificationEvaluator(
                     dataset_path,
-                    known_selection_region_df=pd.read_csv(known_region_path) if os.path.exists(known_region_path) else None,
+                    known_selection_region_df=pd.read_csv(known_region_path)
+                    if os.path.exists(known_region_path)
+                    else None,
                     dataset_name=ds_name.pop(0),
                 )
                 evaluators.append(evaluator)
@@ -85,21 +106,20 @@ if __name__ == "__main__":
             evaluators.append(evaluator)
 
     results = {}
-    preds = {}
-    trues = {}
     for model in models:
         for evaluator in evaluators:
             print(f"Evaluating {model.model_name} on {evaluator.dataset_name}")
             predictions = evaluator.run(model, FORCE)
             res = evaluator.evaluate(predictions)
             results[(model.model_name, evaluator.dataset_name)] = res
-            preds[(model.model_name, evaluator.dataset_name)] = predictions
-            trues[(model.model_name, evaluator.dataset_name)] = evaluator.trues()
 
     # convert results to dataframe
     df = pd.DataFrame.from_dict(results, orient="index")
     df.index = pd.MultiIndex.from_tuples(df.index, names=["model", "dataset"])
     df = df.reset_index().sort_values(by=["dataset", "model"])
+
+    models = df["model"].unique().tolist()
+    datasets = df["dataset"].unique().tolist()
 
     if "accuracy" in df.columns:
         df_table = df[
@@ -108,106 +128,138 @@ if __name__ == "__main__":
         print(df_table.to_string())
 
     if "obs" in df.columns:
-        df_table_g = df[["model", "dataset", "obs", "null_mean", "ci", "p_emp"]].dropna()
+        df_table_g = df[
+            ["model", "dataset", "obs", "null_mean", "ci", "p_emp"]
+        ].dropna()
         print(df_table_g.to_string())
 
     # plot roc curves
     for dataset_name in df["dataset"].unique():
-        y_trues = [trues[key] for key in preds.keys() if key[1] == dataset_name]
-        y_scores = [preds[key][:, 1] for key in preds.keys() if key[1] == dataset_name]
-        model_names = [key[0] for key in preds.keys() if key[1] == dataset_name]
+        y_trues = [
+            results[(model, dataset_name)].get("trues", None) for model in models
+        ]
+        y_scores = [
+            results[(model, dataset_name)].get("preds", None) for model in models
+        ]
         if y_trues[0] is None:
             continue
         random_classification.plot_roc_curves(
             y_trues,
             y_scores,
-            model_names,
+            models,
             save_path=f"figs/{dataset_name}_roc_curves.png",
         )
         random_classification.plot_pr_curves(
             y_trues,
             y_scores,
-            model_names,
+            models,
             save_path=f"figs/{dataset_name}_pr_curves.png",
         )
 
     # plot curves by s
-    s_masks = {ds: [] for ds in df["dataset"].unique()}
-    for (model_name, dataset_name), res in results.items():
-        if "s_masks" in res:
-            s_mask = res["s_masks"]
-            min_freq_mask = res.get("min_freq_masks", None)
-            s_masks[dataset_name].append((model_name, s_mask, min_freq_mask))
-    for dataset_name, s_mask_list in s_masks.items():
-        if "pan_4" not in dataset_name:
-            continue
+    model = "popformer-ft"
+    dataset_name = "pan_test_has_dfe_0"
+    if (model, dataset_name) in results:
+        y_trues = results[(model, dataset_name)]["trues"]
+        y_scores = results[(model, dataset_name)]["preds"]
+        s_masks = {
+            f"s={i:.3f}": (results[(model, dataset_name)]["s"] == i)
+            | (np.array(y_trues) == 0)
+            for i in np.unique(results[(model, dataset_name)]["s"])
+            if i != 0
+        }
 
-        for model, s_mask, min_freq_mask in s_mask_list:
-            if model != "popf-ft":
-                continue
-            sm = [item["mask"] for item in s_mask[::-1]]
-            names = [item["s_bin"] for item in s_mask[::-1]]
-            y_trues = trues[(model, dataset_name)]
-            y_scores = preds[(model, dataset_name)][:, 1]
-            colors = plt.cm.cividis(np.linspace(0, 1, len(sm)))
+        colors = plt.cm.cividis(np.linspace(0, 1, len(s_masks)))
 
-            random_classification.plot_roc_curves(
-                [np.array(y_trues)[s] for s in sm],
-                [np.array(y_scores)[s] for s in sm],
-                names,
-                colors=colors,
-                save_path=f"figs/{dataset_name}_roc_curves_by_s.png",
-            )
-            random_classification.plot_pr_curves(
-                [np.array(y_trues)[s] for s in sm],
-                [np.array(y_scores)[s] for s in sm],
-                names,
-                colors=colors,
-                save_path=f"figs/{dataset_name}_pr_curves_by_s.png",
-            )
-    
-    # plot facet grid of ROC curves
-    for dataset_name, s_mask_list in s_masks.items():
-        # only do for pan_4 datasets
-        if "pan_4" not in dataset_name:
-            continue
+        random_classification.plot_roc_curves(
+            [np.array(y_trues)[s] for s in s_masks.values()],
+            [np.array(y_scores)[s] for s in s_masks.values()],
+            list(s_masks.keys()),
+            colors=colors,
+            save_path=f"figs/{dataset_name}_roc_curves_by_s.png",
+        )
+        random_classification.plot_pr_curves(
+            [np.array(y_trues)[s] for s in s_masks.values()],
+            [np.array(y_scores)[s] for s in s_masks.values()],
+            list(s_masks.keys()),
+            colors=colors,
+            save_path=f"figs/{dataset_name}_pr_curves_by_s.png",
+        )
 
-        fig, axes = plt.subplots(5, 5, figsize=(20, 20), layout="constrained", sharex=True, sharey=True)
+        # plot facet grid of ROC curves
+        fig, axes = plt.subplots(
+            5, 5, figsize=(20, 20), layout="constrained", sharex=True, sharey=True
+        )
 
         # models as lines, s_bins as columns, min_freq_bins as rows
-        for model, s_mask, min_freq_mask in s_mask_list:
-            y_trues = trues[(model, dataset_name)]
-            y_scores = preds[(model, dataset_name)][:, 1]
+        y_trues = [results[(model, dataset_name)]["trues"] for model in models]
+        y_scores = [results[(model, dataset_name)]["preds"] for model in models]
 
-            if min_freq_mask is not None:
-                for i, min_freq_item in enumerate(min_freq_mask[1:]):
-                    min_freq_value = min_freq_item["facet_value"]
-                    min_freq_m = min_freq_item["mask"]
-                    for j, s_item in enumerate(s_mask):
-                        # label first row and first column
-                        if i == 0:
-                            axes[0, j].set_title(f"s_bin={s_item['s_bin']}", fontsize=16)
-                        if j == 0:
-                            axes[i, 0].set_ylabel(f"min_freq_bin={min_freq_value}", fontsize=16)
-                        s_value = s_item["s_bin"]
-                        s_m = s_item["mask"]
-                        combined_m = (min_freq_m & s_m) | (np.array(y_trues) == 0)
-                        if np.any(combined_m):
-                            ax = axes[i, j]
-                            random_classification.plot_pr_curves(
-                                [np.array(y_trues)[combined_m]],
-                                [np.array(y_scores)[combined_m]],
-                                [f"{model}"],
-                                ax=ax,
-                            )
-    
+        if np.unique(results[(model, dataset_name)]["s"]).shape[0] <= 5:
+            s_masks = [
+                (f"{i:.3f}", results[(model, dataset_name)]["s"] == i)
+                for i in np.unique(results[(model, dataset_name)]["s"])
+                if i != 0
+            ]
+        else:
+            s_masks = [
+                (
+                    f"({i}, {j})",
+                    (results[(model, dataset_name)]["s"] > i)
+                    & (results[(model, dataset_name)]["s"] <= j),
+                )
+                for i, j in [
+                    (0, 0.02),
+                    (0.02, 0.04),
+                    (0.04, 0.06),
+                    (0.06, 0.08),
+                    (0.08, 0.1),
+                ]
+            ]
+        # pd qcut onset_time into 5 bins ignoring zeros
+        var = "onset_time"
+        # print(results[(model, dataset_name)].keys())
+        onset_time = results[(model, dataset_name)][var]
+        onset_time_nonzero = onset_time[onset_time > 0]
+        onset_time_bins = (
+            pd.qcut(onset_time_nonzero, 5, duplicates="drop")
+            .unique()
+            .categories.tolist()
+        )
+        onset_time_masks = []
+        for bin in onset_time_bins:
+            bin_label = f"({bin.left:.2f}, {bin.right:.2f}]"
+            mask = (onset_time > bin.left) & (onset_time <= bin.right)
+            onset_time_masks.append((bin_label, mask))
+
+        for i, (onset_bin_label, onset_bin) in enumerate(onset_time_masks):
+            for j, (s_bin_label, s_bin) in enumerate(s_masks):
+                # label first row and first column
+                if i == 0:
+                    axes[0, j].set_title(f"s={s_bin_label}", fontsize=16)
+                if j == 0:
+                    axes[i, 0].set_ylabel(f"{var}={onset_bin_label}", fontsize=16)
+                combined_m = (onset_bin & s_bin) | (np.array(y_trues[0]) == 0)
+                if np.any(combined_m):
+                    ax = axes[i, j]
+                    random_classification.plot_roc_curves(
+                        [np.array(y_true)[combined_m] for y_true in y_trues],
+                        [np.array(y_score)[combined_m] for y_score in y_scores],
+                        models,
+                        ax=ax,
+                    )
+
         plt.savefig(f"figs/{dataset_name}_roc_facet_grid.png", dpi=300)
         plt.close()
 
     # plot region predictions for genome classification
     region_plot = {ds: [] for ds in df["dataset"].unique()}
     for (model_name, dataset_name), res in results.items():
-        if not ("popf" in model_name or "lp" in model_name or model_name in ["pi", "tajimas_d", "ihs"]):
+        if not (
+            "popf" in model_name
+            or "lp" in model_name
+            or model_name in ["pi", "tajimas_d", "ihs"]
+        ):
             continue
         if "region_plot_data" in res:
             region_data = res["region_plot_data"]
@@ -242,15 +294,21 @@ if __name__ == "__main__":
                 end_pos=end_pos,
                 window=1,
                 window_type="mean",
-                label_df=pd.read_csv(f"data/matrices/bigregions/{dataset_name}.csv") if dataset_name.startswith("len200") else None,
+                label_df=pd.read_csv(f"data/matrices/bigregions/{dataset_name}.csv")
+                if dataset_name.startswith("len200")
+                else None,
                 save_path=f"figs/{dataset_name}_region_plot.png",
-                line=True
+                line=True,
             )
 
     # plot region predictions for genome classification
     sig_masks = {ds: [] for ds in df["dataset"].unique()}
     for (model_name, dataset_name), res in results.items():
-        if not ("popf" in model_name or "lp" in model_name or model_name in ["pi", "tajimas_d", "ihs"]):
+        if not (
+            "popf" in model_name
+            or "lp" in model_name
+            or model_name in ["pi", "tajimas_d", "ihs"]
+        ):
             continue
         if "sig_mask" in res:
             sig_mask = res["sig_mask"]
@@ -259,27 +317,35 @@ if __name__ == "__main__":
     for dataset_name, sig_mask_list in sig_masks.items():
         if not sig_mask_list:
             continue
+
+        y_preds = [
+            results[(model_name, dataset_name)]["preds"]
+            for model_name, _ in sig_mask_list
+        ]
         genome_classification.plot_boxplot(
             # normalize y_preds
-            y_preds = [
-                (preds[(model_name, dataset_name)][:, 1] - np.min(preds[(model_name, dataset_name)][:, 1])) /
-                (np.max(preds[(model_name, dataset_name)][:, 1]) - np.min(preds[(model_name, dataset_name)][:, 1]))
-                for model_name, _ in sig_mask_list
-            ],
-
+            y_preds=[(y - np.min(y)) / (np.max(y) - np.min(y)) for y in y_preds],
             model_names=[model_name for model_name, _ in sig_mask_list],
             sig_mask=sig_mask_list[0][1],  # all sig_masks are the same
             save_path=f"figs/{dataset_name}_boxplot.png",
         )
 
     # for genome, plot correlations of predictions with tajima's d
-    taj_d_genome = [y_scores for (model_name, dataset_name), y_scores in preds.items() if model_name == "tajimas_d" and "genome" in dataset_name]
-    popf_genome = [y_trues for (model_name, dataset_name), y_trues in preds.items() if model_name == "popf-small-ft" and "genome" in dataset_name]
-    
-    if taj_d_genome and popf_genome:
+    tajd_genome = [
+        results[("tajimas_d", dataset_name)]["preds"]
+        for dataset_name in datasets
+        if "genome" in dataset_name
+    ]
+    popf_genome = [
+        results[("popformer-ft", dataset_name)]["preds"]
+        for dataset_name in datasets
+        if "genome" in dataset_name
+    ]
+
+    if tajd_genome and popf_genome:
         genome_classification.plot_correlation(
-            popf_genome[0][:, 1],
-            taj_d_genome[0][:, 1],
+            popf_genome[0],
+            tajd_genome[0],
             y1lab="popf-ft score",
             y2lab="Tajima's D",
             save_path="figs/genome_correlation_tajimas_d_popf.png",
@@ -300,5 +366,4 @@ if __name__ == "__main__":
             null,
             obs,
             save_path=f"figs/{dataset_name}_null_distribution.png",
-        ) 
-
+        )

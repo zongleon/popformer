@@ -1,37 +1,41 @@
 """
 Re-implement of Faster-NN model training for evaluation.
 """
+
 from datasets import load_from_disk
 from torch.utils.data import DataLoader
 
+import os
 import sys
+
 sys.path.append("analysis/")
 from evaluation.models.fasternn import FasterNNModel
 
-model = FasterNNModel(model_path="models/fasternn/fasternn.pt", model_name="FASTER-NN", from_init=True)
+model = FasterNNModel(
+    model_path=f"models/fasternn/fasternn_{os.path.basename(os.path.normpath(sys.argv[1]))}.pt",
+    model_name="FASTER-NN",
+    from_init=True,
+)
 
-# we gotta data from haplotype matrices to
-# shape (batch_size, 2, num_snps)
-
-data = load_from_disk("data/dataset/pan_4_train_with_low_s/")
-split_data = data.train_test_split(test_size=0.1)
+data = load_from_disk(sys.argv[1]).shuffle(42)
+split_data = data.train_test_split(test_size=0.05)  # , stratify_by_column="label")
 train_data = split_data["train"]
 val_data = split_data["test"]
 
 
 train_loader = DataLoader(
     train_data,
-    batch_size=8,
+    batch_size=16,
     shuffle=True,
     num_workers=4,
     collate_fn=model.preprocess,
 )
 val_loader = DataLoader(
     val_data,
-    batch_size=8,
+    batch_size=16,
     shuffle=False,
     num_workers=4,
     collate_fn=model.preprocess,
 )
 
-model.train(train_loader, val_loader, epochs=100, lr=1e-4, patience=10)
+model.train(train_loader, val_loader, epochs=100, lr=1e-4, patience=5)

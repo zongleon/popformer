@@ -8,10 +8,10 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score
 from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
+import sys
 
-models = ["popf-small"]
-train_data = ["pan_4_train_with_low_s"]
-
+models = [sys.argv[1]]
+train_data = [sys.argv[2]]
 
 def load_features(path: str) -> np.ndarray:
     with np.load(path, allow_pickle=False) as npz:
@@ -84,8 +84,6 @@ def experiment():
             )
 
             # split training dataset
-            train_features = shuffle(train_features, random_state=0)
-            train_labels = shuffle(train_labels, random_state=0)
             X_tr, X_test, y_tr, y_test = train_test_split(
                 train_features,
                 train_labels,
@@ -104,10 +102,14 @@ def experiment():
             # best_C = grid_search_C(
             #     X_train, y_train, X_ev, y_ev
             # )
-            best_C = 100
+            best_C = 1
 
             classifier = LogisticRegression(random_state=0, C=best_C, max_iter=1000)
             classifier.fit(X_tr, y_tr)
+
+            test_pred = classifier.predict_proba(X_test)[:, 1]
+            test_acc = (y_test == (test_pred >= 0.5)).mean()
+            print(f"Test set accuracy: {test_acc:.4f}")
 
             os.makedirs("models/lp", exist_ok=True)
             with open(f"models/lp/{train_set}_{model}_lp.pkl", "wb") as f:

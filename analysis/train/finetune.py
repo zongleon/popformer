@@ -1,6 +1,9 @@
 import torch
-from popformer.models import PopformerForSNPClassification, PopformerForWindowClassification
-from transformers import TrainingArguments, Trainer
+from popformer.models import (
+    PopformerForSNPClassification,
+    PopformerForWindowClassification,
+)
+from transformers import TrainingArguments, Trainer, AutoConfig
 from datasets import load_from_disk
 from sklearn.metrics import (
     accuracy_score,
@@ -18,25 +21,38 @@ parser.add_argument(
     "--mode", type=str, default="selbin", help="Mode: realsim/selbin/selreg/ancientx"
 )
 parser.add_argument(
-    "--dataset_path", type=str, default="", help="Path to tokenized dataset"
+    "--dataset-path", type=str, default="", help="Path to tokenized dataset"
 )
 parser.add_argument(
-    "--num_epochs", type=int, default=5, help="Number of training epochs"
+    "--num-epochs", type=int, default=5, help="Number of training epochs"
 )
 parser.add_argument(
-    "--batch_size", type=int, default=16, help="Batch size for training and evaluation"
+    "--batch-size", type=int, default=16, help="Batch size for training and evaluation"
 )
 parser.add_argument(
-    "--gradient_accumulation_steps", type=int, default=1, help="Gradient accumulation steps"
+    "--gradient-accumulation-steps",
+    type=int,
+    default=1,
+    help="Gradient accumulation steps",
 )
 parser.add_argument(
-    "--output_path", type=str, default="", help="Output path for model checkpoints"
+    "--output-path", type=str, default="", help="Output path for model checkpoints"
 )
-parser.add_argument("--learning_rate", type=float, default=1e-4, help="Learning rate")
+parser.add_argument("--learning-rate", type=float, default=1e-4, help="Learning rate")
 parser.add_argument(
-    "--freeze_layers_up_to", type=int, default=0, help="Number of layers to freeze from the bottom"
+    "--freeze-layers-up-to",
+    type=int,
+    default=0,
+    help="Number of layers to freeze from the bottom",
 )
-parser.add_argument("--pretrained", type=str, default="models/popf-small", help="Pretrained model path")
+parser.add_argument(
+    "--pretrained", type=str, default="models/popf-small", help="Pretrained model path"
+)
+parser.add_argument(
+    "--from-init",
+    action="store_true",
+    help="Whether to train from scratch. Use config from pretrained model if provided.",
+)
 
 args = parser.parse_args()
 
@@ -91,19 +107,33 @@ if MODE == "pop":
 # eval_dataset = dataset["test"]
 
 # test_dataset = dataset["test"].take(512)
-dataset = dataset.train_test_split(0.05, shuffle=True)
+# dataset = dataset.train_test_split(0.05, stratify_by_column="label")
+dataset = dataset.train_test_split(0.05)
 train_dataset = dataset["train"]
 eval_dataset = dataset["test"]
-print(f"Labels distribution in train: {train_dataset['label'].count(0)}, {train_dataset['label'].count(1)}")
-print(f"Labels distribution in eval: {eval_dataset['label'].count(0)}, {eval_dataset['label'].count(1)}")
-# eval_dataset = test_dataset
-
-model = model.from_pretrained(
-    args.pretrained,
-    classifier_dropout=0,
-    num_labels=num_labels,
-    torch_dtype=torch.bfloat16,
+print(
+    f"Labels distribution in train: {train_dataset['label'].count(0)}, {train_dataset['label'].count(1)}"
 )
+print(
+    f"Labels distribution in eval: {eval_dataset['label'].count(0)}, {eval_dataset['label'].count(1)}"
+)
+
+# eval_dataset = test_dataset
+if args.from_init:
+    config = AutoConfig.from_pretrained(args.pretrained)
+    config.num_labels = num_labels
+    if hasattr(config, "classifier_dropout"):
+        config.classifier_dropout = 0
+
+    model = model(config)
+else:
+    model = model.from_pretrained(
+        args.pretrained,
+        classifier_dropout=0,
+        num_labels=num_labels,
+        torch_dtype=torch.bfloat16,
+    )
+
 if args.freeze_layers_up_to > 0:
     for param in model.roberta.embeddings.parameters():
         param.requires_grad = False
@@ -112,8 +142,9 @@ if args.freeze_layers_up_to > 0:
         for param in model.roberta.encoder.layer[i].parameters():
             param.requires_grad = False
 
-collator = HaploSimpleDataCollator(subsample=(64, 64), subsample_type="diverse",
-                                   label_dtype=typ)
+collator = HaploSimpleDataCollator(
+    subsample=(64, 64), subsample_type="diverse", label_dtype=typ
+)
 
 # training arguments
 training_args = TrainingArguments(
@@ -139,7 +170,7 @@ training_args = TrainingArguments(
     ddp_find_unused_parameters=False,
     remove_unused_columns=False,
     learning_rate=args.learning_rate,
-    dataloader_num_workers=4
+    dataloader_num_workers=4,
 )
 
 

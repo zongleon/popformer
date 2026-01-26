@@ -24,7 +24,7 @@ class Region:
         s = str(self.chrom) + ":" + str(self.start_pos) + "-" + str(self.end_pos)
         return s
 
-    def inside_mask(self, mask_dict, frac_callable=0.5):
+    def inside_mask(self, mask_dict, frac_callable=0.5, return_fraction=False):
         if mask_dict is None:
             return True
 
@@ -71,6 +71,8 @@ class Region:
         else:
             part_inside += mask_lst[region_end_idx][1] - mask_lst[region_end_idx][0]
 
+        if return_fraction:
+            return part_inside / self.region_len
         return part_inside / self.region_len >= frac_callable
 
 

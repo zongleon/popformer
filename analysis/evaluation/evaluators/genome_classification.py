@@ -1,10 +1,11 @@
+import re
 from ..core import BaseHFEvaluator
 
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
-
+import theme
 
 class GenomeClassificationEvaluator(BaseHFEvaluator):
     """
@@ -44,7 +45,15 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
         df = df.rename(columns={"Chromosome": "chrom", "Start": "start", "End": "end"})
 
         if "Population" in df.columns:
-            df = df[df["Population"] == "CEU"]
+            # if this dataset has a string of 3 capital letters, filter to that population
+            pop_regex = r"[A-Z]{3}"
+            pop = re.search(pop_regex, self.dataset_name)
+            if pop:
+                pop = pop.group(0)
+                print(f"Filtering known selection regions to population {pop}")
+                df = df[df["Population"] == pop]
+            else:
+                df = df[df["Population"] == "CEU"]
 
         if margin > 0:
             df["start"] = df["start"] - margin
@@ -145,7 +154,9 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
         }
 
     def evaluate(self, predictions):
-        results = {}
+        results = {
+            "preds": predictions[:, 1],
+        }
         if hasattr(self, "start_pos"):
             # store plotting data for region predictions
             start_pos = np.array(self.start_pos)
