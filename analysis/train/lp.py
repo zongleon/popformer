@@ -5,13 +5,18 @@ import numpy as np
 import pandas as pd
 import pickle
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import average_precision_score
+from sklearn.metrics import average_precision_score, accuracy_score
 from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
 import sys
 
 models = [sys.argv[1]]
 train_data = [sys.argv[2]]
+
+test_size = 0.05
+if len(sys.argv) > 3:
+    test_size = float(sys.argv[3])
+
 
 def load_features(path: str) -> np.ndarray:
     with np.load(path, allow_pickle=False) as npz:
@@ -20,22 +25,8 @@ def load_features(path: str) -> np.ndarray:
 
 
 def load_labels(path: str, label_column: str = "label") -> np.ndarray:
-    # Try HuggingFace dataset directory
-    if os.path.isdir(path):
-        ds = datasets.load_from_disk(path)
-        if label_column not in ds.column_names:
-            raise ValueError(f"Column '{label_column}' not found in dataset at {path}")
-        return np.asarray(ds[label_column])
-
-    # csv file
-    ext = os.path.splitext(path)[1].lower()
-    if ext == ".csv":
-        df = pd.read_csv(path)
-        if label_column not in df.columns:
-            raise ValueError(f"Column '{label_column}' not found in CSV: {path}")
-        return df[label_column].to_numpy()
-
-    raise ValueError(f"Unsupported labels file type: {path}")
+    ds = datasets.load_from_disk(path)
+    return np.asarray(ds[label_column])
 
 
 def grid_search_C(
@@ -52,7 +43,7 @@ def grid_search_C(
         clf = LogisticRegression(random_state=0, C=C, max_iter=1000)
         clf.fit(X_tr, y_tr)
         ev_pred = clf.predict_proba(X_ev)[:, 1]
-        acc = average_precision_score(y_ev, ev_pred)
+        acc = accuracy_score(y_ev, ev_pred > 0.5)
         acc = (y_ev == (ev_pred >= 0.5)).mean()
         print(f"C={C:.4g} score={acc:.4f}")
 
@@ -64,21 +55,11 @@ def grid_search_C(
     return float(best_C)
 
 
-def save_predictions_npz(input_npz_path: str, preds: np.ndarray, out_path: str) -> None:
-    # Pass through all arrays except 'features', add 'preds'
-    with np.load(input_npz_path, allow_pickle=False) as npz:
-        payload = {k: npz[k] for k in npz.files if k != "features"}
-    payload["preds"] = preds
-    np.savez(out_path, **payload)
-
-
 def experiment():
     for model in models:
         for train_set in train_data:
             print(f"\n=== Model: {model}, Train set: {train_set} ===")
-            train_features = load_features(
-                f"data/features/{train_set}_{model}.npz"
-            )
+            train_features = load_features(f"data/features/{train_set}_{model}.npz")
             train_labels = load_labels(
                 f"data/dataset/{train_set}/", label_column="label"
             )
@@ -88,20 +69,18 @@ def experiment():
                 train_features,
                 train_labels,
                 random_state=0,
-                test_size=0.2,
+                test_size=test_size,
                 stratify=train_labels,
             )
-            X_train, X_ev, y_train, y_ev = train_test_split(
-                X_tr,
-                y_tr,
-                random_state=0,
-                test_size=0.2,
-                stratify=y_tr,
-            )
-
-            # best_C = grid_search_C(
-            #     X_train, y_train, X_ev, y_ev
+            # X_train, X_ev, y_train, y_ev = train_test_split(
+            #     X_tr,
+            #     y_tr,
+            #     random_state=0,
+            #     test_size=0.2,
+            #     stratify=y_tr,
             # )
+
+            # best_C = grid_search_C(X_train, y_train, X_ev, y_ev)
             best_C = 1
 
             classifier = LogisticRegression(random_state=0, C=best_C, max_iter=1000)
@@ -112,7 +91,7 @@ def experiment():
             print(f"Test set accuracy: {test_acc:.4f}")
 
             os.makedirs("models/lp", exist_ok=True)
-            with open(f"models/lp/{train_set}_{model}_lp.pkl", "wb") as f:
+            with open(f"models/lp/{train_set}_{model}-{test_size}_lp.pkl", "wb") as f:
                 pickle.dump(classifier, f)
 
     return 0

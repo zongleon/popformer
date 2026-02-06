@@ -3,22 +3,32 @@ import torch
 import torch.nn as nn
 from transformers import RobertaForSequenceClassification
 from transformers.modeling_outputs import BaseModelOutputWithPoolingAndCrossAttentions
-from transformers.models.roberta.modeling_roberta import RobertaForMaskedLM, RobertaModel
+from transformers.models.roberta.modeling_roberta import (
+    RobertaForMaskedLM,
+    RobertaModel,
+)
 
 from .modules import PopformerEncoder
 
+
 class PopformerForMaskedLM(RobertaForMaskedLM):
     """RobertaForMaskedLM that accepts distances in forward pass."""
+
     def __init__(self, config):
         super().__init__(config)
         self.roberta = PopformerModel(config, add_pooling_layer=False)
         self.post_init()
 
-    def forward(self, input_ids, distances, attention_mask, 
-                labels=None, 
-                return_hidden_states=False, 
-                return_attentions=False,
-                **kwargs):
+    def forward(
+        self,
+        input_ids,
+        distances,
+        attention_mask,
+        labels=None,
+        return_hidden_states=False,
+        return_attentions=False,
+        **kwargs,
+    ):
         # Pass distances through to the model
         outputs = self.roberta(
             input_ids=input_ids,
@@ -33,7 +43,9 @@ class PopformerForMaskedLM(RobertaForMaskedLM):
         masked_lm_loss = None
         if labels is not None:
             loss_fct = torch.nn.CrossEntropyLoss()
-            masked_lm_loss = loss_fct(prediction_scores.view(-1, self.config.vocab_size), labels.view(-1))
+            masked_lm_loss = loss_fct(
+                prediction_scores.view(-1, self.config.vocab_size), labels.view(-1)
+            )
 
         if return_hidden_states or return_attentions:
             return {
@@ -53,40 +65,106 @@ class PopformerClassificationHead(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
-        classifier_dropout = (
-            config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
-        )
-        self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        self.dropout = nn.Dropout(classifier_dropout)
+        # self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+        # self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.out_proj = nn.Linear(config.hidden_size, config.num_labels)
 
     def forward(self, features, **kwargs):
-        # x = features[:, 0, 0, :]  # take <s> token (equiv. to [CLS])
-        x = features.mean(dim=(1, 2)) # take mean across haps, snps
-        # x = features[:, :, 0, :].mean(dim=1)  # mean across haplotypes at bos SNP token
-        x = self.layer_norm(x)
-        # x = features[:, 0, :].mean(dim=1) # take mean across [CLS] token
-        x = self.dropout(x)
-        x = self.dense(x)
-        x = torch.tanh(x)
-        x = self.dropout(x)
+        x = features.mean(dim=(1, 2))  # take mean across haps, snps
+        # x = self.layer_norm(x)
+        # x = self.dense(x)
+        # x = torch.tanh(x)
+        # x = self.dropout(x)
         x = self.out_proj(x)
         return x
 
 
+class PopformerClassificationAttnPoolingHead(nn.Module):
+    """Window-level head with learned attention pooling over (haps, snps)."""
+
+    def __init__(self, config):
+        super().__init__()
+        hidden = config.hidden_size
+        attn_hidden = getattr(config, "attn_pool_hidden_size", hidden)
+
+        classifier_dropout = (
+            config.classifier_dropout
+            if getattr(config, "classifier_dropout", None) is not None
+            else config.hidden_dropout_prob
+        )
+
+        self.layer_norm = nn.LayerNorm(hidden, eps=config.layer_norm_eps)
+        self.dropout = nn.Dropout(classifier_dropout)
+
+        # Token scoring network: produces one scalar per (hap, snp) token
+        self.score = nn.Sequential(
+            nn.Linear(hidden, attn_hidden),
+            nn.Tanh(),
+            nn.Linear(attn_hidden, 1),
+        )
+
+        # Optional temperature: <1 makes pooling sharper, >1 smoother
+        self.temperature = float(getattr(config, "attn_pool_temperature", 1.0))
+
+        self.out_proj = nn.Linear(hidden, config.num_labels)
+
+    def forward(self, features, attention_mask=None, **kwargs):
+        """
+        features: (B, H, S, D)
+        attention_mask: (B, H, S) with 1 for valid tokens, 0 for padding
+        returns logits: (B, num_labels)
+        """
+        x = features
+        B, H, S, D = x.shape
+        device = x.device
+
+        x_norm = self.layer_norm(x)
+
+        # scores: (B, H, S)
+        scores = self.score(self.dropout(x_norm)).squeeze(-1)
+        if self.temperature != 1.0:
+            scores = scores / self.temperature
+
+        # Flatten to (B, T) where T = H*S
+        flat_scores = scores.view(B, -1)
+
+        weights = torch.softmax(flat_scores, dim=-1)
+
+        # Ensure masked positions contribute 0, renormalize (avoids weirdness if many pads)
+        weights = weights / weights.sum(dim=-1, keepdim=True).clamp(min=1.0)
+
+        weights = weights.view(B, H, S)  # (B, H, S)
+
+        # Weighted sum over hap and snp axes -> (B, D)
+        pooled = (x * weights.unsqueeze(-1)).sum(dim=(1, 2))
+        pooled = self.dropout(pooled)
+
+        return self.out_proj(pooled)
+
+
 class PopformerForWindowClassification(RobertaForSequenceClassification):
     """RobertaForSequenceClassification that accepts distances in forward pass."""
+
     def __init__(self, config):
         super().__init__(config)
         self.roberta = PopformerModel(config, add_pooling_layer=False)
 
         # test a simple logistic regression head
-        self.classifier = PopformerClassificationHead(config)
+        if hasattr(config, "use_attn_pooling") and config.use_attn_pooling:
+            self.classifier = PopformerClassificationAttnPoolingHead(config)
+        else:
+            self.classifier = PopformerClassificationHead(config)
         self.post_init()
 
-    def forward(self, input_ids=None, distances=None, attention_mask=None, labels=None, 
-                return_hidden_states=False, **kwargs):
+    def forward(
+        self,
+        input_ids=None,
+        distances=None,
+        attention_mask=None,
+        labels=None,
+        return_hidden_states=False,
+        **kwargs,
+    ):
         # Pass distances through to the model
         outputs = self.roberta(
             input_ids=input_ids,
@@ -94,9 +172,11 @@ class PopformerForWindowClassification(RobertaForSequenceClassification):
             distances=distances,
         )
 
-        output = outputs[0] # unpooled
+        output = outputs[0]  # unpooled
         # print(output.mean(), output.std())
-        logits = self.classifier(output)
+        logits = self.classifier(
+            output, attention_mask=attention_mask
+        )  # (batch_size, num_labels)
 
         loss = None
         if labels is not None:
@@ -108,7 +188,9 @@ class PopformerForWindowClassification(RobertaForSequenceClassification):
                 # print softmax'd logits and labels
                 # print(logits.softmax(dim=-1), labels)
                 # print(logits, labels)
-                loss = loss_fct(logits.view(-1, self.config.num_labels), labels.view(-1))
+                loss = loss_fct(
+                    logits.view(-1, self.config.num_labels), labels.view(-1)
+                )
 
         if return_hidden_states:
             return {
@@ -131,7 +213,9 @@ class PopformerSNPClassificationHead(nn.Module):
         super().__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         classifier_dropout = (
-            config.classifier_dropout if config.classifier_dropout is not None else config.hidden_dropout_prob
+            config.classifier_dropout
+            if config.classifier_dropout is not None
+            else config.hidden_dropout_prob
         )
         self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(classifier_dropout)
@@ -151,6 +235,7 @@ class PopformerSNPClassificationHead(nn.Module):
 
 class PopformerForSNPClassification(RobertaForSequenceClassification):
     """SNP-level (column-wise) classification model."""
+
     def __init__(self, config):
         super().__init__(config)
         self.roberta = PopformerModel(config, add_pooling_layer=False)
@@ -159,8 +244,15 @@ class PopformerForSNPClassification(RobertaForSequenceClassification):
         self.classifier = PopformerSNPClassificationHead(config)
         self.post_init()
 
-    def forward(self, input_ids=None, distances=None, attention_mask=None, labels=None, 
-                return_hidden_states=False, **kwargs):
+    def forward(
+        self,
+        input_ids=None,
+        distances=None,
+        attention_mask=None,
+        labels=None,
+        return_hidden_states=False,
+        **kwargs,
+    ):
         # Pass distances through to the model
         outputs = self.roberta(
             input_ids=input_ids,
@@ -174,13 +266,21 @@ class PopformerForSNPClassification(RobertaForSequenceClassification):
         loss = None
         if labels is not None:
             if self.config.num_labels == 1:
-                loss_fct = torch.nn.MSELoss(reduction='none')
+                loss_fct = torch.nn.MSELoss(reduction="none")
                 loss = loss_fct(logits.view(-1), labels.view(-1))
                 mask = labels.view(-1) != -100
-                loss = loss[mask].mean() if mask.any() else torch.tensor(0.0, device=logits.device)
+                loss = (
+                    loss[mask].mean()
+                    if mask.any()
+                    else torch.tensor(0.0, device=logits.device)
+                )
             else:
-                loss_fct = torch.nn.CrossEntropyLoss()
-                loss = loss_fct(logits.view(-1, self.config.num_labels), labels.view(-1))
+                loss_fct = torch.nn.CrossEntropyLoss(
+                    weight=torch.tensor([1.0, 1000.0], device=logits.device)
+                )
+                loss = loss_fct(
+                    logits.view(-1, self.config.num_labels), labels.view(-1)
+                )
 
         if return_hidden_states:
             return {
@@ -199,6 +299,7 @@ class PopformerModel(RobertaModel):
     Base Popformer model. Subclasses RobertaModel but generally only for the saving/loading logic,
     basically every module is replaced.
     """
+
     def __init__(self, config, add_pooling_layer=True):
         super().__init__(config, add_pooling_layer=add_pooling_layer)
         # remove absolute position embeddings
@@ -245,7 +346,9 @@ class PopformerModel(RobertaModel):
         # For pooling, we might want to pool over haplotypes or use a different strategy
         # mean over haplotypes
         # pooled_output = sequence_output.mean(dim=1)
-        pooled_output = self.pooler(sequence_output) if self.pooler is not None else None
+        pooled_output = (
+            self.pooler(sequence_output) if self.pooler is not None else None
+        )
         attentions = encoder_outputs[1] if return_attentions else None
         # if self.pooler is not None:
         #     # Simple pooling: take mean over haplotypes and first SNP
@@ -257,4 +360,3 @@ class PopformerModel(RobertaModel):
             pooler_output=pooled_output,
             attentions=attentions,
         )
-

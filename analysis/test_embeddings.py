@@ -128,7 +128,7 @@ def pca(embeds, lbls, figpath, legend_title="POP", continuous=False):
         palette="viridis" if continuous else theme.pop_to_color,
         # legend="full",
     )
-    s.ticklabel_format(axis='both', style='sci', scilimits=(0, 0))
+    s.ticklabel_format(axis="both", style="sci", scilimits=(0, 0))
 
     sns.despine()
 
@@ -245,7 +245,7 @@ if __name__ == "__main__":
         pca(embeds, lbls, "figs/embeds/pca.png")
     elif mode == "selection":
         ds = (
-            load_from_disk("data/dataset/pan_4_test").shuffle(42)  # .take(2048)
+            load_from_disk("data/dataset/pan_test").shuffle(42)  # .take(2048)
         )
         embeds_path = "embeds_sel_init.npy"
 

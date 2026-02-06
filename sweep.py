@@ -4,7 +4,10 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from transformers import AutoConfig
-from popformer.models import PopformerForWindowClassification
+from popformer.models import (
+    PopformerForWindowClassification,
+    PopformerForSNPClassification,
+)
 from popformer.collators import HaploSimpleDataCollator
 from datasets import load_from_disk
 from tqdm import tqdm
@@ -17,16 +20,26 @@ def sweep(
 ):
     data = load_from_disk(dataset)
 
+    # Detect model type
     if model == "init":
         conf = AutoConfig.from_pretrained("models/popf-small")
         conf.torch_dtype = torch.float16
         model = PopformerForWindowClassification(conf)
+        model_type = "window"
     else:
-        model = PopformerForWindowClassification.from_pretrained(
-            model, torch_dtype=torch.float16
-        )
+        # Try to load as window model, fallback to SNP model
+        try:
+            model = PopformerForWindowClassification.from_pretrained(
+                model, torch_dtype=torch.float16
+            )
+            model_type = "window"
+        except Exception:
+            model = PopformerForSNPClassification.from_pretrained(
+                model, torch_dtype=torch.float16
+            )
+            model_type = "snp"
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # device = "cpu"
     model.to(device)
     model.eval()
 
@@ -43,38 +56,92 @@ def sweep(
     )
     preds = []
     features = []
+    positions = []
+    chroms = []
+
     with torch.inference_mode():
         for batch in tqdm(loader):
-            # Move tensors to device
             for k, v in batch.items():
                 if isinstance(v, torch.Tensor):
                     batch[k] = v.to(device, non_blocking=True)
 
-            output = model(
-                batch["input_ids"],
-                batch["distances"],
-                batch["attention_mask"],
-                return_hidden_states=save_features_path is not None,
-            )
+            if model_type == "window":
+                output = model(
+                    batch["input_ids"],
+                    batch["distances"],
+                    batch["attention_mask"],
+                    return_hidden_states=save_features_path is not None,
+                )
+                if save_preds_path:
+                    preds.append(output["logits"].detach().cpu())
+                if save_features_path:
+                    features.append(
+                        output["hidden_states"].mean(dim=(1, 2)).detach().cpu()
+                    )
+                # For plotting, keep window-level positions
+                if "positions" in batch:
+                    # batch["positions"]: [B, L]
+                    positions.append(batch["positions"][:, 0].cpu())
+                    chroms.append(batch["chrom"])
+                elif "start_pos" in batch and "end_pos" in batch:
+                    positions.append(batch["start_pos"].cpu())
+                    chroms.append(batch["chrom"])
+            else:  # SNP model
+                output = model(
+                    batch["input_ids"],
+                    batch["distances"],
+                    batch["attention_mask"],
+                    return_hidden_states=save_features_path is not None,
+                )
+                # output["logits"]: [B, L, C]
+                logits = output["logits"].detach().cpu()
+                if save_preds_path:
+                    # Flatten batch and SNP dimension
+                    preds.append(logits.reshape(-1, logits.shape[-1]))
+                if save_features_path:
+                    features.append(
+                        output["hidden_states"].mean(dim=(1, 2)).detach().cpu()
+                    )
+                # Compute SNP positions for each allele
+                # batch["distances"]: [B, L], batch["start_pos"]: [B]
+                # For each batch, cumsum(distances) + start_pos
+                batch_dist = batch["distances"].cpu().numpy()
+                batch_start = batch["start_pos"].cpu().numpy()
+                batch_chrom = batch["chrom"]
+                for i in range(batch_dist.shape[0]):
+                    snp_offsets = np.cumsum(batch_dist[i])
+                    snp_positions = batch_start[i] + snp_offsets
+                    positions.append(torch.tensor(snp_positions, dtype=torch.int64))
+                    chroms.append(
+                        torch.full_like(
+                            torch.tensor(snp_positions, dtype=torch.int64),
+                            batch_chrom[i],
+                        )
+                    )
 
-            if save_preds_path:
-                preds.append(output["logits"].detach().cpu())
-            if save_features_path:
-                # mean pool them
-                features.append(output["hidden_states"].mean(dim=(1, 2)).detach().cpu())
-
-    if "positions" in data.column_names:
-        start_pos = [p[0] for p in data["positions"]]
-        end_pos = [p[-1] for p in data["positions"]]
-        chrom = data["chrom"]
-    elif "start_pos" in data.column_names and "end_pos" in data.column_names:
-        start_pos = data["start_pos"]
-        end_pos = data["end_pos"]
-        chrom = data["chrom"]
-    else:
-        start_pos = np.array([])
-        end_pos = np.array([])
-        chrom = np.array([])
+    # Prepare output arrays
+    if model_type == "window":
+        if "positions" in data.column_names:
+            start_pos = [p[0] for p in data["positions"]]
+            end_pos = [p[-1] for p in data["positions"]]
+            chrom = data["chrom"]
+        elif "start_pos" in data.column_names and "end_pos" in data.column_names:
+            start_pos = data["start_pos"]
+            end_pos = data["end_pos"]
+            chrom = data["chrom"]
+        else:
+            start_pos = np.array([])
+            end_pos = np.array([])
+            chrom = np.array([])
+    else:  # SNP model
+        # Concatenate all SNP positions and chroms
+        all_positions = (
+            torch.cat(positions, dim=0).numpy() if positions else np.array([])
+        )
+        all_chroms = torch.cat(chroms, dim=0).numpy() if chroms else np.array([])
+        start_pos = all_positions
+        end_pos = all_positions
+        chrom = all_chroms
 
     if save_features_path:
         all_features = torch.cat(features, dim=0).numpy()
@@ -200,7 +267,7 @@ def plot_manhattan(
 
     # Load selection regions
     sel_df = pd.read_csv("data/SEL/sel.csv")
-    access_mask = np.load(preds_path_stub.format(pop="CAL"))["preds"] >= 0.8
+    # access_mask = np.load(preds_path_stub.format(pop="CAL"))["preds"] >= 0.8
 
     for i, (ax, pop) in enumerate(zip(axs, populations)):
         data = np.load(preds_path_stub.format(pop=pop))
@@ -211,9 +278,22 @@ def plot_manhattan(
 
         if probs.ndim == 2:
             probs = torch.softmax(torch.tensor(probs), dim=-1)[:, 1].numpy()
+            # probs = probs[:, 1]
         if isinstance(window, int) and window > 1:
             kernel = np.ones(window, dtype=float) / window
             probs = np.convolve(probs, kernel, mode="same")[window:-window]
+
+            # use min filter instead of average
+            # probs = (
+            #     pd.Series(probs).rolling(window=window, center=True).min().to_numpy()
+            # )
+            # probs = probs[window:-window]
+
+            # median
+            # probs = (
+            #     pd.Series(probs).rolling(window=window, center=True).median().to_numpy()
+            # )
+            # probs = probs[window:-window]
 
         # min in window
         # if isinstance(window, int) and window > 1:
@@ -235,19 +315,21 @@ def plot_manhattan(
         # probs = (
         #     probs[window:-window] if isinstance(window, int) and window > 1 else probs
         # )
-        access_mask = (
-            access_mask[window:-window]
-            if isinstance(window, int) and window > 1
-            else access_mask
-        )
+        # access_mask = (
+        #     access_mask[window:-window]
+        #     if isinstance(window, int) and window > 1
+        #     else access_mask
+        # )
 
-        probs = probs[access_mask]
+        # probs = probs[access_mask]
 
         for c in chroms:
-            mask = chrom[access_mask] == c
+            # mask = chrom[access_mask] == c
+            mask = chrom == c
             if not np.any(mask):
                 continue
-            x = starts[access_mask][mask] + offsets[c]
+            # x = starts[access_mask][mask] + offsets[c]
+            x = starts[mask] + offsets[c]
             y = probs[mask]
             ax.scatter(
                 x,
@@ -280,6 +362,7 @@ def plot_manhattan(
             added_label = True
 
         # ax.set_ylim(0, 1)
+        # ax.set_yscale("log", base=10)
         ax.set_ylabel("p(selection)")
         ax.set_title(f"{pop}")
         ax.grid(True, axis="y", alpha=0.3, linestyle="--")

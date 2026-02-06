@@ -51,6 +51,7 @@ def main(d, out, pop="human"):
     seeds["sweep"] = df[df["coeff"] > 0]["seed"].tolist()
     
     # store results
+    total = len(seeds["neutral"]) + len(seeds["sweep"])
     matrices = np.full((total, MAX_HAPS, MAX_SNPS), 5, dtype=np.int8)
     distances = np.zeros((total, MAX_SNPS), dtype=np.int32)
     ns = []

@@ -7,6 +7,7 @@ import pandas as pd
 import seaborn as sns
 import theme
 
+
 class GenomeClassificationEvaluator(BaseHFEvaluator):
     """
     Evaluator that makes classifications for windows that are in order (e.g. a genome).
@@ -154,8 +155,15 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
         }
 
     def evaluate(self, predictions):
+        # preds = predictions
+        preds = predictions[:, 1]
+        # preds = _windowed_mean(
+        #     predictions[:, 1],
+        #     window=5,
+        #     window_type="median",
+        # )
         results = {
-            "preds": predictions[:, 1],
+            "preds": preds,
         }
         if hasattr(self, "start_pos"):
             # store plotting data for region predictions
@@ -166,7 +174,7 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
                 "start_pos": start_pos,
                 "end_pos": end_pos,
                 "chrom": chrom,
-                "preds": predictions[:, 1],
+                "preds": preds,
             }
             if (
                 hasattr(self, "known_selection_region_df")
@@ -177,11 +185,6 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
                 true_windowed = self._get_windowed(windows, margin=0)
                 true_windowed_sig = true_windowed == 1
                 # preds = predictions[:, 1]
-                preds = _windowed_mean(
-                    predictions[:, 1],
-                    window=1,
-                    window_type="mean",
-                )
                 perm_results = self._permutation(
                     preds,
                     true_windowed_sig,
@@ -248,6 +251,9 @@ def _windowed_mean(
     elif window_type == "max":
         p_pad = np.pad(data, (window // 2, window - 1 - window // 2), mode="edge")
         data = np.array([np.max(p_pad[i : i + window]) for i in range(len(data))])
+    elif window_type == "median":
+        p_pad = np.pad(data, (window // 2, window - 1 - window // 2), mode="edge")
+        data = np.array([np.median(p_pad[i : i + window]) for i in range(len(data))])
     return data
 
 
@@ -260,7 +266,7 @@ def plot_region(
     window=3,
     label_df=None,
     window_type="mean",
-    line=True
+    line=True,
 ):
     ylbl = "pred. probability of selection"
     pos = (end_pos + start_pos) // 2
@@ -276,15 +282,22 @@ def plot_region(
     )
     if len(preds_adj) == 1:
         axs = [axs]
-    colors = plt.cm.get_cmap("tab10").colors
-    for p, label, ax, color in zip(preds_adj, model_names, axs, colors):
+    for p, label, ax in zip(preds_adj, model_names, axs):
         if line:
             ax.plot(
-                pos[window:-window], p[window:-window], alpha=0.7, label=label, color=color
+                pos[window:-window],
+                p[window:-window],
+                alpha=0.7,
+                label=label,
+                color=theme.model_to_color(label),
             )
         else:
             ax.scatter(
-                pos[window:-window], p[window:-window], alpha=0.4, label=label, color=color
+                pos[window:-window],
+                p[window:-window],
+                alpha=0.4,
+                label=label,
+                color=theme.model_to_color(label),
             )
 
         if label_df is not None:
@@ -306,9 +319,7 @@ def plot_region(
     plt.close()
 
 
-def plot_boxplot(
-    y_preds, model_names, sig_mask, save_path="figs/lp_boxplot.png"
-):
+def plot_boxplot(y_preds, model_names, sig_mask, save_path="figs/lp_boxplot.png"):
     # plot boxplot of predictions in sig vs non-sig regions, for each model
     df = []
     for preds, model_name in zip(y_preds, model_names):
@@ -329,15 +340,13 @@ def plot_boxplot(
         hue="region",
         ax=ax,
     )
-    ax.set_ylabel("pred. probability of selection")
+    ax.set_ylabel("normalized score")
     ax.grid(True, axis="y", alpha=0.3, linestyle="--")
     plt.savefig(save_path, dpi=300)
     plt.close()
 
 
-def plot_histogram_with_line(
-    y_pred, line_at, save_path="figs/lp_histline.png"
-):
+def plot_histogram_with_line(y_pred, line_at, save_path="figs/lp_histline.png"):
     fig, ax = plt.subplots(figsize=(10, 6), layout="constrained")
     sns.histplot(
         y_pred,
@@ -350,15 +359,53 @@ def plot_histogram_with_line(
     plt.close()
 
 
-def plot_correlation(y1, y2, y1lab, y2lab, save_path="figs/lp_s_coeff_correlation.png"):
+def plot_correlation(
+    y1,
+    y2,
+    y1lab,
+    y2lab,
+    sig_mask=None,
+    save_path="figs/lp_s_coeff_correlation.png",
+    *,
+    color_by=None,
+    color_by_label="s",
+    cmap="cividis",
+    alpha=0.5,
+    add_colorbar=True,
+):
     fig, ax = plt.subplots(figsize=(8, 8), layout="constrained")
-    ax.scatter(y1, y2, alpha=0.5)
+
+    if color_by is None:
+        sns.regplot(
+            x=y1,
+            y=y2,
+            ax=ax,
+            scatter_kws={"alpha": alpha},
+            line_kws=dict(color="lightblue"),
+        )
+    else:
+        # regression line (like test_selection_real) + scatter colored by `color_by`
+        sns.regplot(
+            x=y1,
+            y=y2,
+            ax=ax,
+            scatter=False,
+            line_kws=dict(color="lightblue"),
+        )
+        sc = ax.scatter(y1, y2, c=color_by, cmap=cmap, alpha=alpha, s=18, linewidths=0)
+
+        if add_colorbar:
+            cbar = fig.colorbar(sc, ax=ax, pad=0.01)
+            cbar.set_label(color_by_label)
+
+    if sig_mask is not None:
+        y1sig = y1[sig_mask]
+        y2sig = y2[sig_mask]
+        ax.scatter(y1sig, y2sig, color="red", s=18, alpha=0.8)
+
+    spearmanr = pd.Series(y1).corr(pd.Series(y2), method="spearman")
     ax.set_xlabel(y1lab)
     ax.set_ylabel(y2lab)
-    # plot regression line
-    m, b = np.polyfit(y1[~np.isnan(y2)], y2[~np.isnan(y2)], 1)
-    r2 = np.corrcoef(y1[~np.isnan(y2)], y2[~np.isnan(y2)])[0, 1] ** 2
-    ax.plot(y1, m * y1 + b, color="red", label=f"$R^2$={r2:.3f}")
-    ax.grid(True, alpha=0.3, linestyle="--")
+    ax.set_title(f"{y2lab} Spearman r = {spearmanr:.3f}")
     plt.savefig(save_path, dpi=300)
     plt.close()

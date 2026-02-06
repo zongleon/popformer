@@ -8,8 +8,12 @@ class PopformerModel(BaseModel):
     """Popformer model for evaluation."""
 
     def __init__(
-        self, model_path: str, model_name: str, device: torch.device | None = None,
-        subsample = None, subsample_type = "diverse"
+        self,
+        model_path: str,
+        model_name: str,
+        device: torch.device | None = None,
+        subsample=None,
+        subsample_type="diverse",
     ):
         self.model_path = model_path
         self.model_name = model_name
@@ -45,5 +49,10 @@ class PopformerModel(BaseModel):
         )
 
         preds = torch.softmax(output["logits"], dim=1)
-        
+        # preds = output["logits"]
+
+        # # l_1 - l_0
+        # # print(preds)
+        # preds = preds[:, 1] - preds[:, 0]
+
         return preds.cpu().numpy()

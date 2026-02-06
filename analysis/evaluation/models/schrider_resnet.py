@@ -2,7 +2,7 @@
 This file contains code to replicate the Schrider Tree Sequences
 ResNet model for selection detection.
 
-Mostly copied from 
+Mostly copied from
 https://github.com/SchriderLab/TreeSeqPopGenInference/blob/main/src/models/torchvision_mod_layers.py
 """
 
@@ -17,6 +17,18 @@ from scipy.spatial.distance import pdist, squareform
 from seriate import seriate
 
 from popformer.collators import RawMatrixCollator
+
+from sklearn.neighbors import NearestNeighbors
+
+
+def sort_min_diff(amat):
+    """this function takes in a SNP matrix with indv on rows and returns the same matrix with indvs sorted by genetic similarity.
+    this problem is NP, so here we use a nearest neighbors approx.  it's not perfect, but it's fast and generally performs ok.
+    assumes your input matrix is a numpy array"""
+    mb = NearestNeighbors(n_neighbors=len(amat), metric="manhattan").fit(amat)
+    v = mb.kneighbors(amat)
+    smallest = np.argmin(v[0].sum(axis=1))
+    return amat[v[1][smallest]]
 
 
 def conv1x1(in_planes: int, out_planes: int, stride: int = 1) -> nn.Conv2d:
@@ -231,11 +243,14 @@ class ResNet(nn.Module):
 
 
 class SchriderResnet(BaseModel):
-    """Re-implementation of Schrider's resnet model for evaluation.
-    """
+    """Re-implementation of Schrider's resnet model for evaluation."""
 
     def __init__(
-        self, model_path: str, model_name: str, device: torch.device | None = None, from_init: bool = False
+        self,
+        model_path: str,
+        model_name: str,
+        device: torch.device | None = None,
+        from_init: bool = False,
     ):
         if not model_path.endswith(".pt"):
             model_path += ".pt"
@@ -244,7 +259,10 @@ class SchriderResnet(BaseModel):
         # 1 population, 2 classes (neutral, selection)
         # Resnet34 layers according to Schrider's train_cnn.py
         self.width = 512
-        self.model = ResNet(BasicBlock, [2, 2, 2, 2], in_channels=1, num_classes=2, final_dim=512)
+        self.height = 256
+        self.model = ResNet(
+            BasicBlock, [2, 2, 2, 2], in_channels=1, num_classes=2, final_dim=512
+        )
         # self.model = ResNet(BasicBlock, [3, 4, 6, 3], in_channels=1, num_classes=2, final_dim=512)
 
         if not from_init:
@@ -268,9 +286,11 @@ class SchriderResnet(BaseModel):
         # batch contains input_ids, distances
         for mat in batch["input_ids"]:
             if mat.shape[1] > self.width:
-                ii = torch.randint(0, mat.shape[1] - self.width, (1,), device=mat.device).item()
-                mat = mat[:, ii:ii + self.width]
-            else:
+                ii = torch.randint(
+                    0, mat.shape[1] - self.width, (1,), device=mat.device
+                ).item()
+                mat = mat[:, ii : ii + self.width]
+            elif mat.shape[1] < self.width:
                 to_pad = self.width - mat.shape[1]
                 if to_pad % 2 == 0:
                     left = right = to_pad // 2
@@ -278,44 +298,47 @@ class SchriderResnet(BaseModel):
                     left = to_pad // 2 + 1
                     right = to_pad // 2
                 mat = torch.nn.functional.pad(mat, (left, right))
-                    
-            # D = squareform(pdist(mat, metric = 'cosine'))
-            # # print(D)
-            # D[np.isnan(D)] = 0.
-            
-            # ii = seriate(D, timeout = 0.)
-            
-            # # print(ii)
-            # mat = mat[ii,:]
 
-            # sort by computing hamming distances, picking the haplotype with
-            # the smallest total distance to all other haplotypes, then iteratively
-            # picking the next closest haplotype
-            n_haps = mat.shape[0]
-            D = torch.cdist(mat.float(), mat.float(), p=0)  # shape (n_haps, n_haps)
-            D /= mat.shape[1]  # normalize
-            D_np = D.cpu().numpy()
-            selected = []
-            unselected = set(range(n_haps))
-            # pick first haplotype with smallest total distance
-            first_hap = np.argmin(D_np.sum(axis=1))
-            selected.append(first_hap)
-            unselected.remove(first_hap)
-            while unselected:
-                last_hap = selected[-1]
-                unselected_list = list(unselected)
-                next_hap = unselected_list[np.argmin(D_np[last_hap, unselected_list])]
-                selected.append(next_hap)
-                unselected.remove(next_hap)
+            # we also need to pad haplotypes to the height
+            if mat.shape[0] < self.height:
+                to_pad = self.height - mat.shape[0]
+                if to_pad % 2 == 0:
+                    top = bottom = to_pad // 2
+                else:
+                    top = to_pad // 2 + 1
+                    bottom = to_pad // 2
+                mat = torch.nn.functional.pad(mat, (0, 0, top, bottom))
+            elif mat.shape[0] > self.height:
+                ii = torch.randint(
+                    0, mat.shape[0] - self.height, (1,), device=mat.device
+                ).item()
+                mat = mat[ii : ii + self.height, :]
 
-            inputs.append(mat[selected, :].unsqueeze(0).unsqueeze(0))  # add batch + channel dim
+            # raise ValueError("Input has more haplotypes than expected height.")
+            # convert to numpy for sorting
+            mat_np = mat.cpu().numpy()
+            sorted_mat = sort_min_diff(mat_np)
+            # print(sorted_mat.shape)
+            sorted_mat = torch.tensor(sorted_mat, device=mat.device).unsqueeze(0)
+            # print(sorted_mat.shape)
+            inputs.append(sorted_mat)
 
-        batch["inputs"] = torch.cat(inputs, dim=0).to(torch.float32)  # shape (batch_size, 2, num_snps)
+        batch["inputs"] = (torch.cat(inputs, dim=0).to(torch.float32))[
+            :, None, :, :
+        ]  # shape (batch_size, 1, num_haps, num_snps)
+        # print(batch["inputs"].shape)
         batch["labels"] = torch.tensor([ex for ex in batch["labels"]])
 
         return batch
 
-    def train(self, train_loader, val_loader, epochs: int = 10, lr: float = 1e-4, patience: int = 5):
+    def train(
+        self,
+        train_loader,
+        val_loader,
+        epochs: int = 10,
+        lr: float = 1e-4,
+        patience: int = 5,
+    ):
         """Train the model with early stopping based on val_loss."""
         loss_fn = torch.nn.CrossEntropyLoss()
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr, weight_decay=0)
@@ -394,5 +417,6 @@ class SchriderResnet(BaseModel):
         output = self.model(batch["inputs"])
 
         preds = torch.softmax(output, dim=1)
+        # preds = output
 
         return preds.cpu().numpy()

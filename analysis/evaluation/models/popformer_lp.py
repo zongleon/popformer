@@ -15,8 +15,8 @@ class PopformerLPModel(BaseModel):
         lp_path: str,
         model_name: str,
         device: torch.device | None = None,
-        subsample = None,
-        subsample_type = "diverse",
+        subsample=None,
+        subsample_type="diverse",
     ):
         self.model = PopformerForMaskedLM.from_pretrained(
             model_path, torch_dtype=torch.float16
@@ -39,12 +39,10 @@ class PopformerLPModel(BaseModel):
             subsample=subsample, subsample_type=subsample_type
         )
 
-    
     def preprocess(self, batch):
         # collator
         batch = self.collator(batch)
         return batch
-
 
     def run(self, batch):
         """Make predictions on the given batch of data."""
@@ -63,3 +61,7 @@ class PopformerLPModel(BaseModel):
         features = output["hidden_states"].mean(dim=(1, 2)).detach().cpu()
 
         return self.lp_model.predict_proba(features)
+        # pos_logits = self.lp_model.decision_function(features)
+        # logits = torch.zeros((pos_logits.shape[0], 2))
+        # logits[:, 1] = torch.tensor(pos_logits)
+        # return logits

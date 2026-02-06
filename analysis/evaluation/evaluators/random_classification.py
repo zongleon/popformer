@@ -1,7 +1,4 @@
-import os
 from ..core import BaseHFEvaluator
-import numpy as np
-import pandas as pd
 from sklearn.metrics import (
     PrecisionRecallDisplay,
     RocCurveDisplay,
@@ -14,6 +11,7 @@ from sklearn.metrics import (
 import matplotlib.pyplot as plt
 import seaborn as sns
 import theme
+
 
 class RandomClassificationEvaluator(BaseHFEvaluator):
     """
@@ -32,6 +30,7 @@ class RandomClassificationEvaluator(BaseHFEvaluator):
         - Distribution of (s) (if s available)
         - Regioned predictions if positions are available
     """
+
     def evaluate(self, predictions):
         results = {}
         pos_preds = predictions[:, 1]
@@ -44,7 +43,8 @@ class RandomClassificationEvaluator(BaseHFEvaluator):
         recall = recall_score(self.labels, binary_preds)
 
         facet_vars = [
-            k for k in [
+            k
+            for k in [
                 "s",
                 "growth",
                 "low_mut",
@@ -59,23 +59,63 @@ class RandomClassificationEvaluator(BaseHFEvaluator):
         for var in facet_vars:
             results[var] = getattr(self, var)
 
-        results.update({
-            "model_name": self.model_name,
-            "accuracy": acc,
-            "auroc": aucroc,
-            "auprc": auprc,
-            "precision": precision,
-            "recall": recall,
-            "preds": pos_preds,
-            "trues": self.labels,
-        })
+        results.update(
+            {
+                "model_name": self.model_name,
+                "accuracy": acc,
+                "auroc": aucroc,
+                "auprc": auprc,
+                "precision": precision,
+                "recall": recall,
+                "preds": pos_preds,
+                "trues": self.labels,
+            }
+        )
 
         return results
 
 
-def plot_roc_curves(y_trues, y_scores, model_names, colors=None, ax=None, add_ax_labels=False, save_path="figs/roc_curves.png"):
+def plot_score_distributions(
+    y_trues,
+    y_scores,
+    model_names,
+    colors=None,
+    save_path="figs/score_distributions.png",
+):
+    fig, axs = plt.subplots(
+        len(model_names), 1, figsize=(8, 6 * len(model_names)), layout="constrained"
+    )
+
+    for i, (y_true, y_score, model_name) in enumerate(
+        zip(y_trues, y_scores, model_names)
+    ):
+        ax = axs[i] if len(model_names) > 1 else axs
+        if y_true is None:
+            continue
+        sns.histplot(
+            x=y_score,
+            hue=y_true,
+            ax=ax,
+        )
+
+    ax.set_xlabel("Predicted Score")
+    ax.set_ylabel("Density")
+    ax.grid(True, axis="y", alpha=0.3, linestyle="--")
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+
+def plot_roc_curves(
+    y_trues,
+    y_scores,
+    model_names,
+    colors=None,
+    ax=None,
+    add_ax_labels=True,
+    save_path="figs/roc_curves.png",
+):
     new = False
-    if not ax:
+    if ax is None:
         new = True
         fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
 
@@ -83,7 +123,9 @@ def plot_roc_curves(y_trues, y_scores, model_names, colors=None, ax=None, add_ax
         old_xlabel = ax.get_xlabel()
         old_ylabel = ax.get_ylabel()
 
-    for i, (y_true, y_score, model_name) in enumerate(zip(y_trues, y_scores, model_names)):
+    for i, (y_true, y_score, model_name) in enumerate(
+        zip(y_trues, y_scores, model_names)
+    ):
         if y_true is None:
             continue
         RocCurveDisplay.from_predictions(
@@ -91,7 +133,9 @@ def plot_roc_curves(y_trues, y_scores, model_names, colors=None, ax=None, add_ax
             y_score,
             name=model_name,
             ax=ax,
-            curve_kwargs={"color": theme.model_to_color[model_name]} if colors is None else {"color": colors[i]},
+            curve_kwargs={"color": theme.model_to_color(model_name)}
+            if colors is None
+            else {"color": colors[i]},
         )
 
     if not add_ax_labels:
@@ -107,7 +151,15 @@ def plot_roc_curves(y_trues, y_scores, model_names, colors=None, ax=None, add_ax
         plt.close()
 
 
-def plot_pr_curves(y_trues, y_scores, model_names, colors=None, ax=None, add_ax_labels=False, save_path="figs/pr_curves.png"):
+def plot_pr_curves(
+    y_trues,
+    y_scores,
+    model_names,
+    colors=None,
+    ax=None,
+    add_ax_labels=True,
+    save_path="figs/pr_curves.png",
+):
     new = False
     if not ax:
         new = True
@@ -116,8 +168,10 @@ def plot_pr_curves(y_trues, y_scores, model_names, colors=None, ax=None, add_ax_
     if not add_ax_labels:
         old_xlabel = ax.get_xlabel()
         old_ylabel = ax.get_ylabel()
-    
-    for i, (y_true, y_score, model_name) in enumerate(zip(y_trues, y_scores, model_names)):
+
+    for i, (y_true, y_score, model_name) in enumerate(
+        zip(y_trues, y_scores, model_names)
+    ):
         if y_true is None:
             continue
         PrecisionRecallDisplay.from_predictions(
@@ -125,10 +179,10 @@ def plot_pr_curves(y_trues, y_scores, model_names, colors=None, ax=None, add_ax_
             y_score,
             name=model_name,
             ax=ax,
-            # curve_kwargs={"color": theme.model_to_color[model_name]} if colors is None else {"color": colors[i]},
-            color=theme.model_to_color[model_name] if colors is None else colors[i],
+            # curve_kwargs={"color": theme.model_to_color(model_name)} if colors is None else {"color": colors[i]},
+            color=theme.model_to_color(model_name) if colors is None else colors[i],
         )
-    
+
     if not add_ax_labels:
         ax.set_xlabel(old_xlabel)
         ax.set_ylabel(old_ylabel)
@@ -142,18 +196,24 @@ def plot_pr_curves(y_trues, y_scores, model_names, colors=None, ax=None, add_ax_
         plt.close()
 
 
-def plot_acc_by_s(df_s_acc, save_path="figs/lp_acc_vs_s.png"):
+def plot_acc_by_x(df_acc, x="s_bin", save_path="figs/lp_acc_vs_s.png"):
     fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
     sns.lineplot(
-        data=df_s_acc,
-        x="s_bin",
-        y="acc",
+        data=df_acc,
+        x=x,
+        y="accuracy",
         hue="model",
+        style="model",
+        errorbar="sd",
+        palette=theme.model_color_map,
         markers=True,
         ax=ax,
     )
-    ax.set_xlabel("s bin")
+    ax.set_xlabel(x)
     ax.set_ylabel("Accuracy")
     ax.grid(True, axis="y", alpha=0.3, linestyle="--")
     plt.savefig(save_path, dpi=300)
     plt.close()
+
+
+# def plot_acc_by_test_size()

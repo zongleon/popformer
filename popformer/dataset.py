@@ -211,11 +211,29 @@ def hdf5_to_dataset(
 
 
 def trees_to_dataset(
-    filepath: str, tokenizer: Tokenizer, window_jump: int, window_size: int
+    filepath: str, tokenizer: Tokenizer, window_jump: int, window_size: int, pop=None
 ) -> Dataset:
     def gen():
         # process tree
         ts = tskit.load(filepath)
+        pops = ts.populations()
+
+        if len(pops) > 1 and pop is not None:
+            pop_ids = [
+                p.id
+                for p in pops
+                if p.metadata is not None and p.metadata["name"] == pop
+            ]
+            if len(pop_ids) == 0:
+                raise ValueError(f"Population {pop} not found in tree sequence.")
+            pop_id = pop_ids[0]
+            samples = ts.samples(population=pop_id)
+            tqdm.write(f"Found population {pop} with {len(samples)} samples.")
+            if len(samples) > 256:
+                samples = samples[:256]
+            ts = ts.simplify(samples=samples)
+            tqdm.write(f"Filtered to population {pop} with {ts.num_samples} samples.")
+
         gt_matrix = ts.genotype_matrix()
         is_biallelic = [
             sum(gt_matrix[i]) == list(gt_matrix[i]).count(1)
@@ -378,7 +396,9 @@ def parse_file(filepath, args) -> Dataset:
             frac_callable=args.frac_callable,
         )
     elif ext == ".trees":
-        return trees_to_dataset(filepath, tokenizer, args.window_jump, args.window_size)
+        return trees_to_dataset(
+            filepath, tokenizer, args.window_jump, args.window_size, pop=args.pop
+        )
     else:
         # non-.vcf, .h5 filetype
         return None
@@ -422,6 +442,12 @@ if __name__ == "__main__":
         type=float,
         default=0.5,
         help="Minimum fraction of callable sites in a window.",
+    )
+    parser.add_argument(
+        "--pop",
+        type=str,
+        default=None,
+        help="Only used if tree sequence contains multiple populations. Will filter to this population.",
     )
     args = parser.parse_args()
 

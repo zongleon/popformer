@@ -3,10 +3,11 @@ from popformer.models import (
     PopformerForSNPClassification,
     PopformerForWindowClassification,
 )
-from transformers import TrainingArguments, Trainer, AutoConfig
+from transformers import EarlyStoppingCallback, TrainingArguments, Trainer, AutoConfig
 from datasets import load_from_disk
 from sklearn.metrics import (
     accuracy_score,
+    average_precision_score,
     f1_score,
     mean_absolute_error,
     mean_squared_error,
@@ -23,6 +24,7 @@ parser.add_argument(
 parser.add_argument(
     "--dataset-path", type=str, default="", help="Path to tokenized dataset"
 )
+parser.add_argument("--test-size", type=float, default=0.05, help="Test size")
 parser.add_argument(
     "--num-epochs", type=int, default=5, help="Number of training epochs"
 )
@@ -53,6 +55,7 @@ parser.add_argument(
     action="store_true",
     help="Whether to train from scratch. Use config from pretrained model if provided.",
 )
+parser.add_argument("--attn-pool", action="store_true", help="Use attention pooling")
 
 args = parser.parse_args()
 
@@ -70,6 +73,10 @@ elif MODE == "selreg":
 elif MODE == "selbin":
     num_labels = 2
     typ = torch.long
+elif MODE == "selbinsnp":
+    num_labels = 2
+    typ = torch.long
+    model = PopformerForSNPClassification
 elif MODE == "pop":
     num_labels = 3
     typ = torch.long
@@ -80,7 +87,7 @@ elif MODE == "ancientx":
 else:
     raise ValueError("Unknown mode selected")
 
-dataset = load_from_disk(dataset_path).shuffle(42)
+dataset = load_from_disk(dataset_path)
 
 if MODE == "pop":
     # dataset = dataset.shuffle().select(range(10000))
@@ -108,7 +115,7 @@ if MODE == "pop":
 
 # test_dataset = dataset["test"].take(512)
 # dataset = dataset.train_test_split(0.05, stratify_by_column="label")
-dataset = dataset.train_test_split(0.05)
+dataset = dataset.train_test_split(args.test_size, seed=42)
 train_dataset = dataset["train"]
 eval_dataset = dataset["test"]
 print(
@@ -122,6 +129,7 @@ print(
 if args.from_init:
     config = AutoConfig.from_pretrained(args.pretrained)
     config.num_labels = num_labels
+    config.use_attn_pooling = args.attn_pool
     if hasattr(config, "classifier_dropout"):
         config.classifier_dropout = 0
 
@@ -129,6 +137,7 @@ if args.from_init:
 else:
     model = model.from_pretrained(
         args.pretrained,
+        # use_attn_pooling=args.attn_pool,
         classifier_dropout=0,
         num_labels=num_labels,
         torch_dtype=torch.bfloat16,
@@ -145,6 +154,9 @@ if args.freeze_layers_up_to > 0:
 collator = HaploSimpleDataCollator(
     subsample=(64, 64), subsample_type="diverse", label_dtype=typ
 )
+# collator = HaploSimpleDataCollator(
+#     label_dtype=typ, subsample=(32, 32), subsample_type="random"
+# )
 
 # training arguments
 training_args = TrainingArguments(
@@ -158,10 +170,13 @@ training_args = TrainingArguments(
     weight_decay=0.01,
     logging_dir="./logs",
     logging_steps=100,
-    save_steps=500,
-    eval_steps=500,
+    save_steps=100,
+    eval_steps=100,
     eval_strategy="steps",
     save_strategy="steps",
+    # logging_strategy="epoch",
+    # eval_strategy="epoch",
+    # save_strategy="epoch",
     save_total_limit=4,
     load_best_model_at_end=True,
     metric_for_best_model="eval_loss",
@@ -176,7 +191,12 @@ training_args = TrainingArguments(
 
 def compute_metrics(eval_pred):
     logits, labels = eval_pred
-    if MODE != "sel" and MODE != "ancientx":
+    if MODE in ["realsim", "selbin", "selbinsnp", "pop"]:
+        if MODE == "selbinsnp":
+            logits, labels = logits.reshape(-1, 2), labels.reshape(-1)
+            mask = labels != -100
+            logits = logits[mask]
+            labels = labels[mask]
         preds = logits.argmax(axis=-1)
         if MODE == "pop":
             acc = accuracy_score(labels, preds)
@@ -192,7 +212,8 @@ def compute_metrics(eval_pred):
         else:
             acc = accuracy_score(labels, preds)
             f1 = f1_score(labels, preds)
-            return {"accuracy": acc, "f1": f1}
+            ap = average_precision_score(labels, logits[:, 1])
+            return {"accuracy": acc, "f1": f1, "auprc": ap}
     else:
         if MODE == "ancientx":
             logits, labels = logits.reshape(-1), labels.reshape(-1)
@@ -212,6 +233,7 @@ trainer = Trainer(
     eval_dataset=eval_dataset,
     compute_metrics=compute_metrics,
     data_collator=collator,
+    callbacks=[EarlyStoppingCallback(early_stopping_patience=3)],
 )
 
 # Train
