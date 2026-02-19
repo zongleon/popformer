@@ -274,6 +274,14 @@ if __name__ == "__main__":
             f"data/matrices/{which}/distances.npy", mmap_mode="r"
         )
         df = pd.read_csv(f"data/matrices/{which}/metadata.csv")
+        generator_df = pd.read_csv("~/projects/onsettofreq/simulate/generators.csv")
+
+        df["pop"] = df.apply(
+            lambda row: generator_df[
+                (generator_df["N1"] == row["N1"]) & (generator_df["N2"] == row["N2"])
+            ]["pop"].iloc[0],
+            axis=1,
+        )
 
         meta_dict = {
             "N1": "float16",
@@ -295,219 +303,101 @@ if __name__ == "__main__":
         features = make_features(
             tokenizer=tokenizer,
             label_dtype="int8",
-            # label_resolution="window",
-            label_resolution="snp",
+            label_resolution="window",
+            # label_resolution="snp",
             include_s=True,
             include_shoulder=True,
             extra_features=meta_dict,
         )
 
-        # make a dataset for has_dfe == 0 and has_dfe == 1
-        # and a combined dataset
-        # filter_name = "has_dfe"
-        # filter_value = 1
-        # mask = df[filter_name] == filter_value
-        # df = df[mask].reset_index(drop=True)
-        # allsamples = allsamples[mask]
-        # alldistances = alldistances[mask]
+        REPEAT = 1
+        window = 50000
+        for pop in df["pop"].unique():
+            pop_df = df[df["pop"] == pop]
+            pop_samples = allsamples[df["pop"] == pop]
+            pop_distances = alldistances[df["pop"] == pop]
+            neutrals = pop_df["coeff"] == 0
+            selections = pop_df["coeff"] > 0
 
-        neutrals = df["coeff"] == 0
-        selections = df["coeff"] > 0
+            # use split
+            split = 0.8
+            total = min(neutrals.sum(), selections.sum())
+            print(f"Total samples per class: {total}")
 
-        # use 80/20 split
-        split = 0.8
-        total = min(neutrals.sum(), selections.sum())
-        print(f"Total samples per class: {total}")
-
-        if split == 1.0:
-            test_samples = list(range(total))
-            train_samples = None
-        else:
             rng = np.random.default_rng(0)
             train_samples = rng.choice(
                 total, size=int(split * total), replace=False
             ).tolist()
             test_samples = list(set(range(total)) - set(train_samples))
 
-        REPEAT = 1
-        window = 50000
-        for split, name in zip(
-            [train_samples, test_samples],
-            ["train", "test"],
-        ):
-            if split is None:
-                continue
-            neutral_dataset = Dataset.from_generator(
-                lambda: gen_sel(
-                    allsamples[neutrals][split],
-                    alldistances[neutrals][split],
-                    df[neutrals].iloc[split],
-                    times=REPEAT,
-                    force_s=None,
-                    # start_at=0,
-                    meta_dict=meta_dict,
-                    window=window,
-                    resolution="snp",
-                ),
-                features=features,
-            )
-            selected_dataset = Dataset.from_generator(
-                lambda: gen_sel(
-                    allsamples[selections][split],
-                    alldistances[selections][split],
-                    df[selections].iloc[split],
-                    times=REPEAT,
-                    force_s=True,
-                    # start_at=0,
-                    meta_dict=meta_dict,
-                    window=window,
-                    resolution="snp",
-                ),
-                features=features,
-            )
-            # shoulders_dataset = Dataset.from_generator(
-            #     lambda: gen_sel(
-            #         allsamples[selections][split],
-            #         alldistances[selections][split],
-            #         df[selections].iloc[split],
-            #         times=REPEAT,
-            #         force_s=False,
-            #         meta_dict=meta_dict,
-            #         window=window,
-            #     ),
-            #     features=features,
-            # )
-            dataset = concatenate_datasets(
-                [
-                    neutral_dataset,
-                    selected_dataset,
-                    # shoulders_dataset,
-                ]
-            )
-
-            # dataset = dataset.class_encode_column("label")
-
-            labels = dataset["label"]
-            unique, counts = np.unique(labels, return_counts=True)
-            label_dist = dict(zip(unique, counts))
-            print(f"Label distribution in {which} {name} dataset: {label_dist}")
-
-            # plot distribution of s
-            import matplotlib.pyplot as plt
-
-            s_values = dataset["s"]
-            plt.hist(s_values, bins=50)
-            plt.xlabel("Selection coefficient (s)")
-            plt.ylabel("Frequency")
-            plt.title(
-                f"Distribution of selection coefficients in {which} {name} dataset"
-            )
-            plt.savefig(f"figs/{which}_{name}_s_distribution.png")
-            plt.close()
-
-            dataset.save_to_disk(f"data/dataset/{which}_{name}_{window}_snp")
-    elif mode == "runsel_neutrals":
-        rng = np.random.default_rng()
-
-        tokenizer = Tokenizer(max_haps=200, num_snps=512)
-
-        features = make_features(
-            tokenizer=tokenizer,
-            label_dtype="int8",
-            label_resolution="window",
-            include_s=True,
-        )
-
-        def gen(fpath: str, n: int, pop: str):
-            # process tree
-            ts = tskit.load(fpath)
-
-            pops = ts.populations()
-            if len(pops) > 1:
-                pop_ids = [p.id for p in pops if p.metadata["name"] == pop]
-                if len(pop_ids) == 0:
-                    raise ValueError(f"Population {pop} not found in tree sequence.")
-                pop_id = pop_ids[0]
-                samples = ts.samples(population=pop_id)
-                ts = ts.simplify(samples=samples)
-                tqdm.write(
-                    f"Filtered to population {pop} with {ts.num_samples} samples."
-                )
-
-            gt_matrix = ts.genotype_matrix()
-            is_biallelic = [
-                sum(gt_matrix[i]) == list(gt_matrix[i]).count(1)
-                for i in range(len(gt_matrix))
-            ]
-            gt_matrix = gt_matrix[is_biallelic]
-            num_snps = gt_matrix.shape[0]
-            positions, dist_vec = get_pos_and_dist_vec(ts, num_snps, is_biallelic)
-
-            gt_matrix = gt_matrix.T
-
-            for _ in range(n):
-                start_idx = np.random.randint(0, num_snps - 36)
-                end_idx = np.searchsorted(positions, positions[start_idx] + 50000)
-
-                m = gt_matrix[:, start_idx:end_idx]
-                d = dist_vec[start_idx:end_idx].copy()
-                p = positions[start_idx:end_idx]
-                d[0] = 0
-
-                dist = d[None, :].repeat(m.shape[0], axis=0)
-                region = np.dstack([m, dist])
-                region, distances = tokenizer(region)
-
-                yield {
-                    "input_ids": region,
-                    "distances": distances,
-                    "chrom": 20,
-                    "label": 0.0,
-                    "s": 0.0,
-                }
-
-        dss = []
-        for chrom in [20, 21, 22]:
-            for pop in ["YRI", "CHB", "CEU"]:
-                print(f"Generating neutrals for chr{chrom} pop {pop}")
-                dataset = Dataset.from_generator(
-                    lambda: gen(
-                        f"/bigdata/smathieson/1000g-share/SLiM/OOA_3G09_chr{chrom}.trees",
-                        1000,
-                        pop,
+            for split, name in zip(
+                [train_samples, test_samples],
+                ["train", "test"],
+            ):
+                if split is None:
+                    continue
+                neutral_dataset = Dataset.from_generator(
+                    lambda: gen_sel(
+                        pop_samples[neutrals][split],
+                        pop_distances[neutrals][split],
+                        pop_df[neutrals].iloc[split],
+                        times=REPEAT,
+                        force_s=None,
+                        meta_dict=meta_dict,
+                        window=window,
                     ),
                     features=features,
                 )
-                dss.append(dataset)
+                selected_dataset = Dataset.from_generator(
+                    lambda: gen_sel(
+                        pop_samples[selections][split],
+                        pop_distances[selections][split],
+                        pop_df[selections].iloc[split],
+                        times=REPEAT * 2,
+                        force_s=True,
+                        meta_dict=meta_dict,
+                        window=window,
+                    ),
+                    features=features,
+                )
+                shoulders_dataset = Dataset.from_generator(
+                    lambda: gen_sel(
+                        pop_samples[selections][split],
+                        pop_distances[selections][split],
+                        pop_df[selections].iloc[split],
+                        times=REPEAT,
+                        force_s=False,
+                        meta_dict=meta_dict,
+                        window=window,
+                    ),
+                    features=features,
+                )
+                dataset = concatenate_datasets(
+                    [
+                        neutral_dataset,
+                        selected_dataset,
+                        shoulders_dataset,
+                    ]
+                )
 
-        dataset = concatenate_datasets(dss)
+                # dataset = dataset.class_encode_column("label")
 
-        # dataset = dataset.class_encode_column("label")
-        dataset.save_to_disk("data/dataset/ooa_neutrals")
-    elif mode == "combine":
-        for which in ["train", "test"]:
-            neutral_dataset = Dataset.load_from_disk(
-                f"data/dataset/pan_neutrals_{which}"
-            )
-            selected_dataset = Dataset.load_from_disk(
-                f"data/dataset/pan_selecteds_{which}"
-            )
-            ooa_neutrals = Dataset.load_from_disk("data/dataset/ooa_neutrals")
-            ooa_neutrals = ooa_neutrals.shuffle(seed=0).take(len(neutral_dataset))
-            # shoulders_dataset = Dataset.load_from_disk(
-            #     f"data/dataset/runsel_shoulders_{which}_50000"
-            # )
-            dataset = concatenate_datasets(
-                [
-                    neutral_dataset,
-                    selected_dataset,
-                    ooa_neutrals,
-                ]
-            )
-            print(f"Combined dataset {which} size: {len(dataset)}")
-            # labels distribution
-            labels = dataset["label"]
-            unique, counts = np.unique(labels, return_counts=True)
-            label_dist = dict(zip(unique, counts))
-            print(f"Label distribution in combined {which} dataset: {label_dist}")
-            dataset.save_to_disk(f"data/dataset/panooa_{which}")
+                labels = dataset["label"]
+                unique, counts = np.unique(labels, return_counts=True)
+                label_dist = dict(zip(unique, counts))
+                print(f"Label distribution in {which} {name} dataset: {label_dist}")
+
+                # plot distribution of s
+                import matplotlib.pyplot as plt
+
+                s_values = dataset["s"]
+                plt.hist(s_values, bins=50)
+                plt.xlabel("Selection coefficient (s)")
+                plt.ylabel("Frequency")
+                plt.title(
+                    f"Distribution of selection coefficients in {which} {name} dataset"
+                )
+                plt.savefig(f"figs/{which}_{name}_s_distribution.png")
+                plt.close()
+
+                dataset.save_to_disk(f"data/dataset/{which}{pop}_{name}")

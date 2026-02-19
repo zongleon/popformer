@@ -1,231 +1,329 @@
+"""Evaluate selection-detection models on real (1000 Genomes) genome data.
+
+Produces genome-scan region plots, boxplots of scores in known-selection
+vs background windows, FDR-vs-threshold curves, positive-vs-negative
+called-region curves, popformer ↔ summary-stat correlations, and
+null-distribution histograms from permutation tests.
+"""
+
 import numpy as np
-import os
 import pandas as pd
-from evaluation.core import BaseEvaluator
-from evaluation.models import (
-    popformer,
-    popformer_lp,
-    fasternn,
-    schrider_resnet,
-    summary_stat,
+
+from evaluation.models import popformer, summary_stat
+from evaluation.evaluators import genome_classification
+from selection_config import (
+    FORCE,
+    make_nn_models,
+    make_summary_stat_models,
+    score_transform,
+    normalize,
+    aggregate_windows,
+    run_all,
+    collect_region_data,
+    sort_models,
 )
-from evaluation.evaluators import random_classification, genome_classification
 
-import matplotlib.pyplot as plt
+# ---------------------------------------------------------------------------
+# Datasets & evaluators
+# ---------------------------------------------------------------------------
+GENOME_DATASETS = [
+    "data/dataset/genome_CEU",
+    "data/dataset/genome_CHB",
+    "data/dataset/genome_YRI",
+]
+KNOWN_POS_PATH = "data/SEL/sel.csv"
+KNOWN_NEG_PATH = "data/SEL/reichsel_negs.csv"
 
-FORCE = False
+AGG_WINDOW_N = 1
 
-if __name__ == "__main__":
-    dataset_paths = [
-        # "data/dataset/genome_CEU_chr1",
-        "data/dataset/genome_CEU",
-        # "data/dataset/genome_YRI",
-        # "data/dataset/genome_CHB",
-    ]
-    test_sizes = [0.05]
-    train_ds = "pan_train_50000"
-    models = []
-    for ts in test_sizes:
-        models += [
-            popformer.PopformerModel(
-                f"models/selbin-ft-{train_ds}-{ts}",
-                f"popformer-ft-{ts}",
-                subsample=(64, 64),
-                subsample_type="diverse",
-            ),
-        ]
 
-    models += [
-        summary_stat.SummaryStatModel(
-            model_name="tajimas_d",
-            summary_stat="tajimas_d",
-        ),
-        summary_stat.SummaryStatPosModel(
-            model_name="recomb_max",
-            variant_file="/bigdata/smathieson/1000g-share/HDF5/CEU.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.h5",
-            summary_stat="recomb",
-        ),
-        summary_stat.SummaryStatPosModel(
-            model_name="ihs_max",
-            variant_file="/bigdata/smathieson/1000g-share/HDF5/CEU.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.h5",
-            summary_stat="ihs",
-            score="max",
-        ),
-        summary_stat.SummaryStatPosModel(
-            model_name="ihs_score",
-            variant_file="/bigdata/smathieson/1000g-share/HDF5/CEU.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.h5",
-            summary_stat="ihs",
-            score="score",
-        ),
-        summary_stat.SummaryStatModel(
-            model_name="sfs_1",
-            summary_stat="sfs",
-            sfs_index=1,
-        ),
-        summary_stat.SummaryStatModel(
-            model_name="sfs_1_count",
-            summary_stat="sfs",
-            sfs_index=1,
-            proportional=False,
-        ),
-        summary_stat.SummaryStatModel(
-            model_name="sfs_2",
-            summary_stat="sfs",
-            sfs_index=2,
-        ),
-        summary_stat.SummaryStatModel(
-            model_name="n_snps",
-            summary_stat="n_snps",
-        ),
-        summary_stat.SummaryStatPosModel(
-            model_name="recomb_max",
-            variant_file="/bigdata/smathieson/1000g-share/HDF5/CEU.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.h5",
-            summary_stat="recomb",
-        ),
-    ]
-    evaluators: list[BaseEvaluator] = []
+def build_evaluators(dataset_paths):
+    import os
 
-    for dataset_path in dataset_paths:
-        labels = None  # by default labels are inferred from the dataset
-        known_paths = [
-            "data/SEL/sel.csv",
-        ]  # "data/SEL/reichsel.csv"]
-        ds_name = [
-            os.path.basename(dataset_path) + "_" + os.path.basename(kp).split(".")[0]
-            for kp in known_paths
-        ]
-        for known_region_path in known_paths:
-            evaluator = genome_classification.GenomeClassificationEvaluator(
-                dataset_path,
-                known_selection_region_df=pd.read_csv(known_region_path),
-                dataset_name=ds_name.pop(0),
+    pos_df = pd.read_csv(KNOWN_POS_PATH)
+    neg_df = pd.read_csv(KNOWN_NEG_PATH)
+    evaluators = []
+    for path in dataset_paths:
+        evaluators.append(
+            genome_classification.GenomeClassificationEvaluator(
+                path,
+                known_selection_region_df=pos_df,
+                dataset_name=os.path.basename(path) + "_pos",
             )
-            evaluators.append(evaluator)
-
-    results = {}
-    for model in models:
-        for evaluator in evaluators:
-            print(f"Evaluating {model.model_name} on {evaluator.dataset_name}")
-            predictions = evaluator.run(model, FORCE)
-            res = evaluator.evaluate(predictions)
-            results[(model.model_name, evaluator.dataset_name)] = res
-
-    # convert results to dataframe
-    df = pd.DataFrame.from_dict(results, orient="index")
-    df.index = pd.MultiIndex.from_tuples(df.index, names=["model", "dataset"])
-    df = df.reset_index().sort_values(by=["dataset", "model"])
-
-    models = df["model"].unique().tolist()
-    datasets = df["dataset"].unique().tolist()
-
-    if "obs" in df.columns:
-        df_table_g = df[
-            ["model", "dataset", "obs", "null_mean", "ci", "p_emp"]
-        ].dropna()
-        print(df_table_g.to_string())
-
-    for dataset_name in df["dataset"].unique():
-        # Gather region plot data directly from `results`
-        region_data_list = sorted(
-            [
-                (model_name, res["region_plot_data"])
-                for (model_name, ds_name), res in results.items()
-                if ds_name == dataset_name and "region_plot_data" in res
-            ],
-            key=lambda x: x[0],
         )
-        if not region_data_list:
+        evaluators.append(
+            genome_classification.GenomeClassificationEvaluator(
+                path,
+                known_selection_region_df=neg_df,
+                dataset_name=os.path.basename(path) + "_neg",
+            )
+        )
+
+    return evaluators
+
+
+# ---------------------------------------------------------------------------
+# Plotting helpers
+# ---------------------------------------------------------------------------
+def save_and_plot_regions(results, datasets):
+    for ds in datasets:
+        rd = collect_region_data(results, ds)
+        if rd is None:
             continue
+        model_names, preds_list, start_pos, end_pos, chrom = rd
 
-        model_names = [m for m, _ in region_data_list]
-        preds_list = [d["preds"] for _, d in region_data_list]
-        chrom = region_data_list[0][1].get("chrom", None)
-        start_pos = region_data_list[0][1]["start_pos"]
-        end_pos = region_data_list[0][1]["end_pos"]
-
-        for i in range(len(model_names)):
+        # Save per-model scan data
+        for name, preds in zip(model_names, preds_list):
             np.savez(
-                f"preds/scans/{dataset_name}_{model_names[i]}_region_plot_data.npz",
+                f"preds/scans/{ds}_{name}_region_plot_data.npz",
                 chrom=chrom,
                 start_pos=start_pos,
                 end_pos=end_pos,
-                preds=preds_list[i],
+                preds=preds,
             )
-        genome_classification.plot_region(
-            preds_list=preds_list,
-            model_names=model_names,
-            start_pos=start_pos,
-            end_pos=end_pos,
-            save_path=f"figs/{dataset_name}_region_plot.png",
-            line=False,
-            window=1,
-        )
 
-    sig_masks = {ds: [] for ds in df["dataset"].unique()}
-    for (model_name, dataset_name), res in results.items():
-        if "sig_mask" in res:
-            sig_mask = res["sig_mask"]
-            sig_masks[dataset_name].append((model_name, sig_mask))
 
-    for dataset_name, sig_mask_list in sig_masks.items():
-        if not sig_mask_list:
-            continue
-
-        y_preds = [
-            results[(model_name, dataset_name)]["preds"]
-            for model_name, _ in sig_mask_list
+def plot_boxplots(results, datasets):
+    for ds in datasets:
+        items = [
+            (m, res["sig_mask"], res["preds"])
+            for (m, d), res in results.items()
+            if d == ds and "sig_mask" in res
         ]
+        if not items:
+            continue
+        ordered = sort_models([m for m, _, _ in items])
+        item_map = {m: (mask, p) for m, mask, p in items}
+        model_names = ordered
+        y_preds = [normalize(score_transform(m, item_map[m][1])) for m in ordered]
+        sig_mask = item_map[model_names[0]][0]
         genome_classification.plot_boxplot(
-            # normalize y_preds
-            y_preds=[(y - np.min(y)) / (np.max(y) - np.min(y)) for y in y_preds],
-            # y_preds=y_preds,
-            model_names=[model_name for model_name, _ in sig_mask_list],
-            sig_mask=sig_mask_list[0][1],  # all sig_masks are the same
-            save_path=f"figs/{dataset_name}_boxplot.png",
+            y_preds=y_preds,
+            model_names=model_names,
+            sig_mask=sig_mask,
+            save_path=f"figs/{ds}_boxplot.png",
         )
 
-    # for genome, plot correlations of predictions with tajima's d
-    genome = "genome_CEU_sel"
-    # first popformer model
-    model = [m for m in models if "popformer" in m][0]
-    popf_genome = [results[(model, genome)]["preds"]]
 
-    for stat in [
+def plot_rate(results, datasets, suffix=""):
+    for ds in datasets:
+        rate_series = []
+        for (m, d), res in results.items():
+            if d != ds or "preds" not in res or "sig_mask" not in res:
+                continue
+            preds = score_transform(m, res["preds"])
+            sig_mask = res["sig_mask"]
+            valid = np.isfinite(preds)
+            if not np.any(valid):
+                continue
+            preds, sig_mask = preds[valid], sig_mask[valid]
+            preds, sig_mask = aggregate_windows(preds, sig_mask, AGG_WINDOW_N)
+            preds = normalize(preds)
+
+            thresholds = np.unique(preds)
+            fnr = np.array(
+                [
+                    (np.sum((preds < t) & sig_mask) / max(np.sum(sig_mask), 1))
+                    for t in thresholds
+                ]
+            )
+            tpr = 1 - fnr
+            frac_called = np.array(
+                [np.sum(preds >= t) / len(preds) for t in thresholds]
+            )
+            rate_series.append((m, frac_called, tpr))
+
+        if rate_series:
+            genome_classification.plot_rate_vs_threshold(
+                rate_series,
+                ds,
+                rate_name="TPR",
+                save_path=f"figs/{ds}_tpr_vs_threshold{'' if suffix == '' else '_' + suffix}.png",
+            )
+
+
+def plot_enrichment(results, datasets, suffix=""):
+    """Plot fold-enrichment at top-k fraction for every dataset."""
+    for ds in datasets:
+        enrichment_series = []
+        for (m, d), res in results.items():
+            if d != ds or "preds" not in res or "sig_mask" not in res:
+                continue
+            preds = score_transform(m, res["preds"])
+            sig_mask = res["sig_mask"]
+            valid = np.isfinite(preds)
+            if not np.any(valid):
+                continue
+            preds, sig_mask = preds[valid], sig_mask[valid]
+            preds, sig_mask = aggregate_windows(preds, sig_mask, AGG_WINDOW_N)
+
+            n = len(preds)
+            base_rate = sig_mask.mean()
+            if base_rate == 0:
+                continue
+
+            order = np.argsort(preds)[::-1]  # descending
+            sig_sorted = sig_mask[order]
+            cum_sel = np.cumsum(sig_sorted)
+
+            ks = np.arange(1, n + 1)
+            k_fracs = ks / n
+            enrichment = (cum_sel / ks) / base_rate
+
+            enrichment_series.append((m, k_fracs, enrichment))
+
+        if enrichment_series:
+            genome_classification.plot_enrichment_at_k(
+                enrichment_series,
+                ds,
+                save_path=f"figs/{ds}_enrichment_at_k{'' if suffix == '' else '_' + suffix}.png",
+            )
+
+
+def plot_pos_vs_neg_called(results, datasets, suffix=""):
+    """ROC-like curves: #pos regions called vs #neg regions falsely called."""
+    base_datasets = sorted(
+        {
+            ds[:-4]
+            for ds in datasets
+            if ds.endswith("_pos") and f"{ds[:-4]}_neg" in datasets
+        }
+    )
+    for base_ds in base_datasets:
+        pos_ds = f"{base_ds}_pos"
+        neg_ds = f"{base_ds}_neg"
+
+        model_names = sort_models(
+            [m for (m, d) in results if d == pos_ds and (m, neg_ds) in results]
+        )
+
+        called_series = []
+        for m in model_names:
+            pos_res = results.get((m, pos_ds), {})
+            neg_res = results.get((m, neg_ds), {})
+            if (
+                "preds" not in pos_res
+                or "sig_mask" not in pos_res
+                or "preds" not in neg_res
+                or "sig_mask" not in neg_res
+            ):
+                continue
+
+            pos_preds = score_transform(m, pos_res["preds"])
+            neg_preds = score_transform(m, neg_res["preds"])
+            pos_mask = pos_res["sig_mask"]
+            neg_mask = neg_res["sig_mask"]
+
+            pos_valid = np.isfinite(pos_preds)
+            neg_valid = np.isfinite(neg_preds)
+            if not np.any(pos_valid) or not np.any(neg_valid):
+                continue
+
+            pos_preds, pos_mask = pos_preds[pos_valid], pos_mask[pos_valid]
+            neg_preds, neg_mask = neg_preds[neg_valid], neg_mask[neg_valid]
+            pos_preds, pos_mask = aggregate_windows(pos_preds, pos_mask, AGG_WINDOW_N)
+            neg_preds, neg_mask = aggregate_windows(neg_preds, neg_mask, AGG_WINDOW_N)
+
+            both_preds = np.concatenate([pos_preds, neg_preds])
+            lo, hi = np.min(both_preds), np.max(both_preds)
+            if hi > lo:
+                pos_preds = (pos_preds - lo) / (hi - lo)
+                neg_preds = (neg_preds - lo) / (hi - lo)
+            else:
+                pos_preds = pos_preds * 0.0
+                neg_preds = neg_preds * 0.0
+
+            thresholds = np.unique(np.concatenate([pos_preds, neg_preds]))[::-1]
+            pos_called = np.array(
+                [np.sum((pos_preds >= t) & pos_mask) for t in thresholds]
+            )
+            neg_called = np.array(
+                [np.sum((neg_preds >= t) & neg_mask) for t in thresholds]
+            )
+
+            called_series.append((m, neg_called, pos_called))
+
+        if called_series:
+            genome_classification.plot_called_pos_vs_neg(
+                called_series,
+                base_ds,
+                save_path=f"figs/{base_ds}_pos_vs_neg_called{'' if suffix == '' else '_' + suffix}.png",
+            )
+
+
+def plot_correlations(results, models, genome_ds):
+    """Scatter popformer-ft scores against each summary stat."""
+    model = next((m for m in models if "popformer" in m), None)
+    if model is None or (model, genome_ds) not in results:
+        return
+    popf_preds = results[(model, genome_ds)]["preds"]
+
+    stats = [
         ("Tajima's D", "tajimas_d"),
-        ("Max iHS", "ihs_max"),
-        ("iHS Score", "ihs_score"),
-        ("Recombination Rate", "recomb_max"),
         ("SFS[1]", "sfs_1"),
         ("SFS[2]", "sfs_2"),
         ("Number of SNPs", "n_snps"),
-    ]:
-        stat_name, stat_genome = stat
-        stat_results = results[(stat_genome, genome)]["preds"]
-        # mask nans
-        valid_mask = ~np.isnan(stat_results)
-        popf_results = popf_genome[0][valid_mask]
-        stat_results = stat_results[valid_mask]
+    ]
+    for stat_label, stat_key in stats:
+        if (stat_key, genome_ds) not in results:
+            continue
+        stat_preds = score_transform(stat_key, results[(stat_key, genome_ds)]["preds"])
+        valid = ~np.isnan(stat_preds)
         genome_classification.plot_correlation(
-            popf_results,
-            stat_results,
+            popf_preds[valid],
+            stat_preds[valid],
             y1lab=f"{model} score",
-            y2lab=stat_name,
-            save_path=f"figs/genome_correlation_{stat_name.replace(' ', '_').lower()}_popf.png",
+            y2lab=stat_label,
+            save_path=f"figs/genome_correlation_{stat_label.replace(' ', '_').lower()}_popf.png",
         )
 
-    # for genome, plot histogram of null distribution with line at obs
-    # only for popf-ft model
-    for (model_name, dataset_name), res in results.items():
-        if model_name != "popformer-ft-0.05":
-            continue
-        if "obs" not in res or "null" not in res:
-            continue
-        obs = res["obs"]
-        p_emp = res["p_emp"]
-        null = res["null"]
 
+def plot_null_distributions(results):
+    for (m, ds), res in results.items():
+        if m != "popformer-ft-0.05" or "obs" not in res or "null" not in res:
+            continue
         genome_classification.plot_histogram_with_line(
-            null,
-            obs,
-            save_path=f"figs/{dataset_name}_null_distribution.png",
+            res["null"],
+            res["obs"],
+            save_path=f"figs/{ds}_null_distribution.png",
         )
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    all_models = (
+        make_nn_models(train_ds="pan2CEU_train", test_sizes=[0.05], suffix="CEU")
+        + make_summary_stat_models()
+    )
+    evaluators = build_evaluators(GENOME_DATASETS)
+
+    results, df = run_all(all_models, evaluators, force=FORCE)
+    models = sort_models(df["model"].unique().tolist())
+    datasets = df["dataset"].unique().tolist()
+
+    if "obs" in df.columns:
+        cols = ["model", "dataset", "obs", "null_mean", "ci", "p_emp"]
+        print(df[cols].dropna().to_string())
+
+    popf_models = [m for m in models if m.startswith("popformer")]
+    unused_stat_models = ["sfs_1", "sfs_2", "n_snps"]
+    all_models = list(set(models) - set(popf_models) - set(unused_stat_models)) + [
+        model for model in models if model.startswith("popformer-lp")
+    ]
+
+    pos_datasets = [ds for ds in datasets if ds.endswith("_pos")]
+    CEU_datasets = [ds for ds in datasets if "CEU" in ds]
+
+    for model_list, suffix in [(all_models, "all"), (popf_models, "popformer")]:
+        subset_res = {(m, d): res for (m, d), res in results.items() if m in model_list}
+        plot_enrichment(subset_res, pos_datasets, suffix=suffix)
+        plot_rate(subset_res, pos_datasets, suffix=suffix)
+
+        plot_pos_vs_neg_called(subset_res, CEU_datasets, suffix=suffix)
+
+    save_and_plot_regions(results, pos_datasets)
+    plot_boxplots(results, pos_datasets)
+    plot_correlations(results, models, pos_datasets[0])
+    plot_null_distributions(results)

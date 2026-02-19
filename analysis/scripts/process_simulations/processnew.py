@@ -11,7 +11,7 @@ from popformer.dataset import find_nonzero_block_cols
 
 FILE = "{pop}_{typ}{seed}.trees"
 MAX_HAPS = 256
-MAX_SNPS = 2048
+MAX_SNPS = 4096
 
 
 def main(d, out, pop="human"):
@@ -35,8 +35,9 @@ def main(d, out, pop="human"):
     ns = []
     for idx, row in tqdm(df.iterrows(), total=total):
         sel = row["coeff"] > 0
-        filename = os.path.join(d, FILE.format(pop=pop, typ="sweep" if sel else "neutral", 
-                                               seed=row["seed"]))
+        filename = os.path.join(
+            d, FILE.format(pop=pop, typ="sweep" if sel else "neutral", seed=row["seed"])
+        )
 
         # process tree
         ts = tskit.load(filename)
@@ -57,7 +58,6 @@ def main(d, out, pop="human"):
         distances[idx, :num_snps] = dist_vec[:num_snps]
 
         ns.append(num_snps)
-
 
     print("\n\nTrees processed.")
     print(f"Haps: {num_haps}")

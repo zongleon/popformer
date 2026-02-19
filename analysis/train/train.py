@@ -18,27 +18,27 @@ parser.add_argument(
     help="Model configuration name",
 )
 parser.add_argument(
-    "--dataset_path", type=str, default="", help="Path to tokenized dataset"
+    "--dataset-path", type=str, default="", help="Path to tokenized dataset"
 )
 parser.add_argument(
-    "--mlm_probability", type=float, default=0.15, help="MLM probability"
+    "--mlm-probability", type=float, default=0.15, help="MLM probability"
 )
 parser.add_argument(
-    "--span_mask_probability", type=float, default=0, help="Span mask probability"
+    "--span-mask-probability", type=float, default=0, help="Span mask probability"
 )
 parser.add_argument(
-    "--num_epochs", type=int, default=5, help="Number of training epochs"
+    "--num-epochs", type=int, default=5, help="Number of training epochs"
 )
 parser.add_argument(
-    "--batch_size", type=int, default=8, help="Batch size for training and evaluation"
+    "--batch-size", type=int, default=8, help="Batch size for training and evaluation"
 )
 parser.add_argument(
-    "--output_path",
+    "--output-path",
     type=str,
     default="./models/pt",
     help="Output path for model checkpoints",
 )
-parser.add_argument("--learning_rate", type=float, default=1e-4, help="Learning rate")
+parser.add_argument("--learning-rate", type=float, default=1e-4, help="Learning rate")
 
 args = parser.parse_args()
 
@@ -84,7 +84,7 @@ model = PopformerForMaskedLM(config)
 
 # data collator
 data_collator = HaploSimpleDataCollator(
-    subsample=(30, 150),
+    subsample=(30, 200),
     mlm_probability=args.mlm_probability,
     span_mask_probability=args.span_mask_probability,
 )

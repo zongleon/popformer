@@ -36,7 +36,6 @@ colors = [
     "#cacaca",
 ]
 model_color_map = {
-    "popformer-lp-panooa": colors[-2],
     "popformer-ft": colors[1],
     "popformer-lp": colors[2],
     "popformer": colors[0],
@@ -46,6 +45,14 @@ model_color_map = {
     "IMPUTE 5": colors[3],
     "Nearest Neighbor": colors[4],
 }
+
+
+def get_model_base_name(model: str):
+    """Extract base model name by removing version/parameter suffixes."""
+    for key in model_color_map:
+        if model.lower().startswith(key.lower()):
+            return key
+    return model
 
 
 def model_to_color(model: str):

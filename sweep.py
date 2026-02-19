@@ -463,8 +463,8 @@ if __name__ == "__main__":
         plot_manhattan(
             preds_path,
             args.plot_preds,
-            # populations=["CEU", "YRI", "CHB"],
-            populations=["CEU"],
+            populations=["CEU", "YRI", "CHB"],
+            # populations=["CEU"],
             window=args.smooth_window,
         )
 

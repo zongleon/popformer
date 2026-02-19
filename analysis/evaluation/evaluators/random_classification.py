@@ -196,21 +196,22 @@ def plot_pr_curves(
         plt.close()
 
 
-def plot_acc_by_x(df_acc, x="s_bin", save_path="figs/lp_acc_vs_s.png"):
+def plot_y_by_x(df_acc, y="accuracy", x="s_bin", save_path="figs/lp_acc_vs_s.png"):
     fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
+    df_acc["model_base"] = df_acc["model"].apply(theme.get_model_base_name)
     sns.lineplot(
         data=df_acc,
         x=x,
-        y="accuracy",
-        hue="model",
-        style="model",
+        y=y,
+        hue="model_base",
+        style="model_base",
         errorbar="sd",
         palette=theme.model_color_map,
         markers=True,
         ax=ax,
     )
     ax.set_xlabel(x)
-    ax.set_ylabel("Accuracy")
+    ax.set_ylabel(y.title())
     ax.grid(True, axis="y", alpha=0.3, linestyle="--")
     plt.savefig(save_path, dpi=300)
     plt.close()

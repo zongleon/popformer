@@ -62,7 +62,8 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
 
         # convert "chr1", etc
         if "chrom" in df.columns:
-            df["chrom"] = df["chrom"].apply(lambda x: int(x.replace("chr", "")))
+            if df["chrom"].dtype == object:
+                df["chrom"] = df["chrom"].apply(lambda x: int(x.replace("chr", "")))
 
             df = df.set_index(["chrom", "start"])
         else:
@@ -157,11 +158,11 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
     def evaluate(self, predictions):
         # preds = predictions
         preds = predictions[:, 1]
-        # preds = _windowed_mean(
-        #     predictions[:, 1],
-        #     window=5,
-        #     window_type="median",
-        # )
+        preds = _windowed_mean(
+            predictions[:, 1],
+            window=15,
+            window_type="mean",
+        )
         results = {
             "preds": preds,
         }
@@ -407,5 +408,97 @@ def plot_correlation(
     ax.set_xlabel(y1lab)
     ax.set_ylabel(y2lab)
     ax.set_title(f"{y2lab} Spearman r = {spearmanr:.3f}")
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+
+def plot_enrichment_at_k(
+    enrichment_series,
+    dataset_name,
+    save_path="figs/enrichment_at_k.png",
+):
+    """Plot fold-enrichment at top-k fraction for each model.
+
+    Parameters
+    ----------
+    enrichment_series : list of (model_name, k_fractions, enrichments)
+        Each entry contains a model name, an array of top-k fractions
+        (0–1), and the corresponding fold-enrichment values.
+    dataset_name : str
+        Used in the plot title.
+    save_path : str
+        Where to save the figure.
+    """
+    fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
+    for model_name, k_fracs, enrichment in sorted(
+        enrichment_series, key=lambda x: x[0]
+    ):
+        ax.plot(
+            k_fracs,
+            enrichment,
+            label=model_name,
+            color=theme.model_to_color(model_name),
+        )
+    ax.axhline(1.0, color="grey", linestyle=":", alpha=0.6, label="baseline")
+    ax.set_xlabel("Fraction of genome called")
+    ax.set_ylabel("Fold enrichment")
+    ax.set_title(f"Enrichment — {dataset_name}")
+    ax.grid(True, alpha=0.3, linestyle="--")
+    ax.legend(loc="upper right")
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+
+def plot_rate_vs_threshold(
+    fdr_series,
+    dataset_name,
+    rate_name="FNR",
+    save_path="figs/fnr_vs_threshold.png",
+):
+    fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
+    for model_name, thresholds, fdr in sorted(fdr_series, key=lambda x: x[0]):
+        ax.plot(
+            thresholds, fdr, label=model_name, color=theme.model_to_color(model_name)
+        )
+    ax.set_xlabel("Fraction of genome called")
+    ax.set_ylabel(rate_name)
+    ax.set_title(dataset_name)
+    ax.grid(True, alpha=0.3, linestyle="--")
+    ax.legend(loc="upper right")
+    plt.savefig(save_path, dpi=300)
+    plt.close()
+
+
+def plot_called_pos_vs_neg(
+    called_series,
+    dataset_name,
+    save_path="figs/pos_called_vs_neg_called.png",
+):
+    """Plot # positive regions called vs # negative regions called.
+
+    Parameters
+    ----------
+    called_series : list of (model_name, neg_called, pos_called)
+        Each entry holds arrays for x (# negatives called) and y
+        (# positives called) as threshold varies.
+    dataset_name : str
+        Label for title.
+    save_path : str
+        Output figure path.
+    """
+    fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
+    for model_name, neg_called, pos_called in sorted(called_series, key=lambda x: x[0]):
+        ax.plot(
+            neg_called,
+            pos_called,
+            label=model_name,
+            color=theme.model_to_color(model_name),
+        )
+
+    ax.set_xlabel("# negative regions called")
+    ax.set_ylabel("# positive regions called")
+    ax.set_title(dataset_name)
+    ax.grid(True, alpha=0.3, linestyle="--")
+    ax.legend(loc="lower right")
     plt.savefig(save_path, dpi=300)
     plt.close()

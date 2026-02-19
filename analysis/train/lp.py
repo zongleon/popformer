@@ -72,13 +72,13 @@ def experiment():
                 test_size=test_size,
                 stratify=train_labels,
             )
-            # X_train, X_ev, y_train, y_ev = train_test_split(
-            #     X_tr,
-            #     y_tr,
-            #     random_state=0,
-            #     test_size=0.2,
-            #     stratify=y_tr,
-            # )
+            X_train, X_ev, y_train, y_ev = train_test_split(
+                X_tr,
+                y_tr,
+                random_state=0,
+                test_size=0.2,
+                stratify=y_tr,
+            )
 
             # best_C = grid_search_C(X_train, y_train, X_ev, y_ev)
             best_C = 1

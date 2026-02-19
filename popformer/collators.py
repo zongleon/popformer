@@ -150,7 +150,6 @@ class HaploSimpleDataCollator:
         self,
         X: torch.Tensor,
         k: int,
-        seed: int | None = None,
     ):
         """
         Select k row indices from a binary matrix X (shape: [n, m]) to maximize diversity
@@ -174,13 +173,10 @@ class HaploSimpleDataCollator:
         # Convert to boolean for fast XOR/compare
         Xb = X.bool()
 
-        rng = torch.Generator()
-        if seed is not None:
-            rng.manual_seed(seed)
         selected = []
 
         # Start with a random row
-        first = torch.randint(0, n, (1,), generator=rng).item()
+        first = torch.randint(0, n, (1,)).item()
         selected.append(first)
 
         # Track which rows remain candidates
@@ -199,7 +195,7 @@ class HaploSimpleDataCollator:
             max_val = cand_dists.max()
             # Random tie-break among equals
             tied = candidate_indices[cand_dists == max_val]
-            choice = int(tied[torch.randint(0, len(tied), (1,), generator=rng)])
+            choice = int(tied[torch.randint(0, len(tied), (1,))])
             selected.append(choice)
             candidate_mask[choice] = False
 
@@ -355,15 +351,13 @@ class HaploSimpleDataCollator:
                     selected = self.select_diverse_rows(
                         input_ids[non_pad_indices, :max_len],
                         subs,
-                        seed=idx,
                     )
                     selected = non_pad_indices[selected]
                 elif self.subsample_type == "random":
                     selected = non_pad_indices[torch.randperm(n_non_pad)[:subs]]
             else:
-                raise RuntimeError(
-                    f"Not enough non-padded haplotypes ({len(non_pad_indices)}) to subsample {self.subsample}"
-                )
+                # If there are fewer non-padded haplotypes than subsample size, keep them all (no oversampling)
+                selected = non_pad_indices
             input_ids = input_ids[selected, :max_len]
             distances = distances[:max_len]
 
@@ -392,6 +386,11 @@ class HaploSimpleDataCollator:
             batch_distances.append(dist_matrix)
 
         # Convert to tensors: (batch, n_haps, n_snps)
+        # if there are some inputs different number of haplotypes,
+        # let's truncate to the min number of haplotypes in the batch (after subsampling)
+        min_haps = min(ids.shape[0] for ids in batch_input_ids)
+        batch_input_ids = [ids[:min_haps] for ids in batch_input_ids]
+
         input_ids = torch.stack(batch_input_ids)
         batch_attention_masks = torch.stack(batch_attention_masks)
         distances = torch.stack(batch_distances)
