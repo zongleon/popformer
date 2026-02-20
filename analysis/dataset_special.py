@@ -14,6 +14,7 @@ import tskit
 
 from popformer.dataset import (
     Tokenizer,
+    find_nonzero_block_cols,
     get_pos_and_dist_vec,
     make_features,
 )
@@ -401,3 +402,61 @@ if __name__ == "__main__":
                 plt.close()
 
                 dataset.save_to_disk(f"data/dataset/{which}{pop}_{name}")
+    elif mode == "runselold":
+        tokenizer = Tokenizer(max_haps=200, num_snps=512)
+
+        features = make_features(
+            tokenizer=tokenizer,
+            label_dtype="int8",
+            label_resolution="window",
+            # label_resolution="snp",
+            include_s=True,
+            # include_shoulder=True,
+            extra_features={},
+        )
+
+        def gen(pop: str):
+            for t, dir, sel, sel_bin in zip(
+                ["neutral_3000", "sel1_600", "sel01_600", "sel05_600", "sel025_600"],
+                ["neutral", "sel_10", "sel_01", "sel_05", "sel_025"],
+                [0, 0.1, 0.01, 0.05, 0.025],
+                [0, 1, 1, 1, 1],
+            ):
+                pop_name = (
+                    "CEU" if pop == "CEU" else "CHB_206" if pop == "CHB" else "YRI_216"
+                )
+                samples: np.ndarray = np.load(
+                    f"data/matrices/old/{pop}_Aug23/{dir}/matrices_regions_{pop_name}_{t}.npy"
+                )[:2400]
+                distances: np.ndarray = np.load(
+                    f"data/matrices/old/{pop}_Aug23/{dir}/distances_regions_{pop_name}_{t}.npy"
+                )[:2400]
+
+                for sample, dist in zip(samples, distances):
+                    sample = sample.T
+                    first, last = find_nonzero_block_cols(sample)
+
+                    sample = np.dstack(
+                        [
+                            sample[:, first:last],
+                            dist[None, first:last].repeat(sample.shape[0], axis=0),
+                        ]
+                    )
+                    region, distances = tokenizer(sample)
+                    distances = (distances * 50000).astype(int)
+                    # tqdm.write(
+                    #     f"Pop {pop}, sel {sel}, region {first}-{last}, shape {sample.shape} -> {region.shape}"
+                    # )
+                    # tqdm.write(f"Distances: {distances}")
+
+                    yield {
+                        "input_ids": region,
+                        "distances": distances,
+                        "label": sel_bin,
+                        "s": sel,
+                    }
+
+        # Save tokenized data
+        for pop in ["CEU", "CHB", "YRI"]:
+            dataset = Dataset.from_generator(lambda p=pop: gen(p), features=features)
+            dataset.save_to_disk(f"data/dataset/{pop}")

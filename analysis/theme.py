@@ -1,27 +1,6 @@
-from collections import defaultdict
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 
 plt.style.use("seaborn-v0_8-ticks")
-
-model_id = 0
-
-
-def darken(color):
-    """Darken a given color by 20%."""
-    c = mcolors.to_rgb(color)
-    factor = 0.8
-    darkened = tuple(max(0, min(1, channel * factor)) for channel in c)
-    return darkened
-
-
-def lighten(color):
-    """Lighten a given color by 20%."""
-    c = mcolors.to_rgb(color)
-    factor = 1.2
-    lightened = tuple(max(0, min(1, channel * factor)) for channel in c)
-    return lightened
-
 
 # define colormap using
 colors = [
@@ -58,11 +37,11 @@ def get_model_base_name(model: str):
 def model_to_color(model: str):
     if model in model_color_map:
         return model_color_map[model]
-    else:
-        model_lower = model.lower()
-        for key in model_color_map:
-            if model_lower.startswith(key.lower()):
-                return model_color_map[key]
+
+    if get_model_base_name(model) in model_color_map:
+        return model_color_map[get_model_base_name(model)]
+
+    return "#000000"  # default to black
 
 
 pop_to_color = {
@@ -71,4 +50,7 @@ pop_to_color = {
     "AFR": "#ffd845",
     "EUR": "#018ead",
     "AMR": "#710027",
+    "CEU": "#018ead",
+    "YRI": "#ffd845",
+    "CHB": "#778500",
 }

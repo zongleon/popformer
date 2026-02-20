@@ -14,8 +14,7 @@ class BaseModel:
     def preprocess(self, batch):
         """Preprocess the given batch of data."""
         return batch
-    
-    
+
     def run(self, batch):
         """Make predictions on the given batch of data."""
         raise NotImplementedError
@@ -34,16 +33,22 @@ class BaseEvaluator:
         # TODO LZ: allow user to set cache dir
         cache_dir = os.path.join("preds", "evaluation")
         os.makedirs(cache_dir, exist_ok=True)
-        cache_path = os.path.join(cache_dir, f"{os.path.basename(dataset_path)}__{self.model_name}.npy")
+        cache_path = os.path.join(
+            cache_dir, f"{os.path.basename(dataset_path)}__{self.model_name}.npy"
+        )
 
         # return cached predictions if available
         if not force and os.path.exists(cache_path):
             return np.load(cache_path)
 
         preds = []
-        
+
         dataloader = DataLoader(
-            self.dataset, batch_size=self.batch_size, shuffle=False, num_workers=4, collate_fn=model.preprocess
+            self.dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=4,
+            collate_fn=model.preprocess,
         )
 
         with torch.inference_mode():
@@ -60,10 +65,9 @@ class BaseEvaluator:
         np.save(cache_path, predictions)
         return predictions
 
-    def evaluate(self, predictions):
+    def evaluate(self, predictions, **kwargs):
         """Compute evaluation metrics."""
         raise NotImplementedError
-
 
     def trues(self):
         """Get the true labels for the dataset."""
@@ -86,7 +90,7 @@ class BaseHFEvaluator(BaseEvaluator):
             self.dataset = load_dataset(dataset_path)
         except ValueError:
             self.dataset = load_from_disk(dataset_path)
-        
+
         if dataset_name is not None:
             self.dataset_name = dataset_name
         else:
@@ -129,7 +133,8 @@ class BaseHFEvaluator(BaseEvaluator):
             "low_mut",
             "onset_time",
             "min_freq",
-            "goal_freq"
+            "goal_freq",
+            "shoulder",
         ]
 
         for attr in extra_attrs:

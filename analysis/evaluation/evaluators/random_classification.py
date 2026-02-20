@@ -31,21 +31,28 @@ class RandomClassificationEvaluator(BaseHFEvaluator):
         - Regioned predictions if positions are available
     """
 
-    def evaluate(self, predictions):
+    def evaluate(self, predictions, **kwargs):
         results = {}
         pos_preds = predictions[:, 1]
         binary_preds = predictions.argmax(axis=1)
 
-        acc = accuracy_score(self.labels, binary_preds)
-        aucroc = roc_auc_score(self.labels, pos_preds)
-        auprc = average_precision_score(self.labels, pos_preds)
-        precision = precision_score(self.labels, binary_preds)
-        recall = recall_score(self.labels, binary_preds)
+        pos_preds_metrics = pos_preds
+        binary_preds_metrics = binary_preds
+        if kwargs.get("invert_for_metrics", False):
+            pos_preds_metrics = 1 - pos_preds_metrics
+            binary_preds_metrics = 1 - binary_preds_metrics
+
+        acc = accuracy_score(self.labels, binary_preds_metrics)
+        aucroc = roc_auc_score(self.labels, pos_preds_metrics)
+        auprc = average_precision_score(self.labels, pos_preds_metrics)
+        precision = precision_score(self.labels, binary_preds_metrics)
+        recall = recall_score(self.labels, binary_preds_metrics)
 
         facet_vars = [
             k
             for k in [
                 "s",
+                "shoulder",
                 "growth",
                 "low_mut",
                 "has_dfe",
@@ -68,6 +75,7 @@ class RandomClassificationEvaluator(BaseHFEvaluator):
                 "precision": precision,
                 "recall": recall,
                 "preds": pos_preds,
+                "preds_for_metrics": pos_preds_metrics,
                 "trues": self.labels,
             }
         )
@@ -105,13 +113,14 @@ def plot_score_distributions(
     plt.close()
 
 
-def plot_roc_curves(
+def plot_curves(
     y_trues,
     y_scores,
     model_names,
-    colors=None,
+    curve_type="roc",
     ax=None,
     add_ax_labels=True,
+    baseify_model_names=True,
     save_path="figs/roc_curves.png",
 ):
     new = False
@@ -123,19 +132,36 @@ def plot_roc_curves(
         old_xlabel = ax.get_xlabel()
         old_ylabel = ax.get_ylabel()
 
+    if curve_type == "roc":
+        plot_fn = RocCurveDisplay.from_predictions
+        xlab = "False Positive Rate"
+        ylab = "True Positive Rate"
+    elif curve_type == "pr":
+        plot_fn = PrecisionRecallDisplay.from_predictions
+        xlab = "Recall"
+        ylab = "Precision"
+    else:
+        raise ValueError(f"Unsupported curve type: {curve_type}. Choose 'roc' or 'pr'.")
+
+    def color_arg(model_name):
+        if curve_type == "roc":
+            return {"curve_kwargs": {"color": theme.model_to_color(model_name)}}
+        else:
+            return {"color": theme.model_to_color(model_name)}
+
     for i, (y_true, y_score, model_name) in enumerate(
         zip(y_trues, y_scores, model_names)
     ):
         if y_true is None:
             continue
-        RocCurveDisplay.from_predictions(
+        plot_fn(
             y_true,
             y_score,
-            name=model_name,
+            name=theme.get_model_base_name(model_name)
+            if baseify_model_names
+            else model_name,
             ax=ax,
-            curve_kwargs={"color": theme.model_to_color(model_name)}
-            if colors is None
-            else {"color": colors[i]},
+            **color_arg(model_name),
         )
 
     if not add_ax_labels:
@@ -144,53 +170,8 @@ def plot_roc_curves(
 
     if new:
         if add_ax_labels:
-            plt.xlabel("False Positive Rate")
-            plt.ylabel("True Positive Rate")
-        plt.grid(True, axis="y", alpha=0.3, linestyle="--")
-        plt.savefig(save_path, dpi=300)
-        plt.close()
-
-
-def plot_pr_curves(
-    y_trues,
-    y_scores,
-    model_names,
-    colors=None,
-    ax=None,
-    add_ax_labels=True,
-    save_path="figs/pr_curves.png",
-):
-    new = False
-    if not ax:
-        new = True
-        fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
-
-    if not add_ax_labels:
-        old_xlabel = ax.get_xlabel()
-        old_ylabel = ax.get_ylabel()
-
-    for i, (y_true, y_score, model_name) in enumerate(
-        zip(y_trues, y_scores, model_names)
-    ):
-        if y_true is None:
-            continue
-        PrecisionRecallDisplay.from_predictions(
-            y_true,
-            y_score,
-            name=model_name,
-            ax=ax,
-            # curve_kwargs={"color": theme.model_to_color(model_name)} if colors is None else {"color": colors[i]},
-            color=theme.model_to_color(model_name) if colors is None else colors[i],
-        )
-
-    if not add_ax_labels:
-        ax.set_xlabel(old_xlabel)
-        ax.set_ylabel(old_ylabel)
-
-    if new:
-        if add_ax_labels:
-            plt.xlabel("Recall")
-            plt.ylabel("Precision")
+            plt.xlabel(xlab)
+            plt.ylabel(ylab)
         plt.grid(True, axis="y", alpha=0.3, linestyle="--")
         plt.savefig(save_path, dpi=300)
         plt.close()

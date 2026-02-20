@@ -186,6 +186,7 @@ training_args = TrainingArguments(
     remove_unused_columns=False,
     learning_rate=args.learning_rate,
     dataloader_num_workers=4,
+    dataloader_pin_memory=True,
 )
 
 

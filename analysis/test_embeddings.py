@@ -73,7 +73,7 @@ def preds_window(model, ds):
     print(f"  with batch size {batch_size}:", (len(ds) + batch_size - 1) // batch_size)
 
     dataloader = DataLoader(
-        ds, batch_size=batch_size, collate_fn=collator, num_workers=4
+        ds, batch_size=batch_size, collate_fn=collator, num_workers=4, pin_memory=True
     )
 
     with torch.inference_mode():
@@ -244,22 +244,38 @@ if __name__ == "__main__":
 
         pca(embeds, lbls, "figs/embeds/pca.png")
     elif mode == "selection":
+        if sys.argv[2] == "init":
+            embeds_path = "embeds_sel_init.npy"
+            model = PopformerForMaskedLM(
+                AutoConfig.from_pretrained(
+                    "./models/popf-small",
+                ),
+            )
+            model.init_weights()
+            # convert to fp16
+            model = model.half()
+        elif sys.argv[2] == "base":
+            embeds_path = "embeds_sel_base.npy"
+            model = PopformerForMaskedLM.from_pretrained(
+                "./models/popf-small", torch_dtype=torch.float16
+            )
+        elif sys.argv[2] == "finetune":
+            embeds_path = "embeds_sel_ft.npy"
+            model = PopformerForWindowClassification.from_pretrained(
+                "./models/selbin-ft-sm-pan2CEU_train-0.05", torch_dtype=torch.float16
+            )
+        elif sys.argv[2] == "no-pretrain":
+            embeds_path = "embeds_sel_no_pretrain.npy"
+            model = PopformerForMaskedLM.from_pretrained(
+                "./models/selbin-pt-sm-pan2CEU_train-0.05", torch_dtype=torch.float16
+            )
+
         ds = (
-            load_from_disk("data/dataset/pan_test").shuffle(42)  # .take(2048)
+            load_from_disk("data/dataset/pan2_test_50000").shuffle(42)  # .take(2048)
         )
-        embeds_path = "embeds_sel_init.npy"
 
         collator = HaploSimpleDataCollator(subsample=(64, 64), subsample_type="diverse")
 
-        # model = PopformerForWindowClassification.from_pretrained(
-        #     "./models/selbin-ft", torch_dtype=torch.float16
-        # )
-
-        model = PopformerForMaskedLM(AutoConfig.from_pretrained("./models/popf-small"))
-
-        # model = PopformerForMaskedLM.from_pretrained(
-        #     "./models/popf-small", torch_dtype=torch.float16
-        # )
         model.to("cuda")
         model.eval()
 
@@ -268,8 +284,31 @@ if __name__ == "__main__":
         else:
             embeds = preds_window(model, ds)
             np.save(embeds_path, embeds)
-        lbls = np.array(ds["s"])
-        # lbls = np.array(ds["low_mut"])
+
+        var = sys.argv[3] if len(sys.argv) > 3 else "s"
+        # lbls = np.array(ds["s"])
+
+        generator_df = pd.read_csv("~/projects/onsettofreq/simulate/generators.csv")
+
+        N1 = ds["N1"]
+        N2 = ds["N2"]
+        df = pd.DataFrame({"N1": N1, "N2": N2})
+        pops = []
+        for idx, row in df.iterrows():
+            # print(np.isclose(generator_df["N1"], row["N1"], atol=50))
+            pop = generator_df[
+                np.isclose(generator_df["N1"], row["N1"], atol=50)
+                & np.isclose(generator_df["N2"], row["N2"], atol=50)
+            ]["pop"].values[0]
+            pops.append(pop)
+
+        df["pop"] = pops
+
+        if var == "pop":
+            lbls = np.array(df["pop"])
+        else:
+            lbls = np.array(ds[var])
+
         # lbls = (np.array(ds["label"]) == 0) & (np.array(ds["s"]) > 0)
         # lbls = lbls.astype(int)
 
@@ -277,9 +316,9 @@ if __name__ == "__main__":
         pca(
             embeds,
             lbls,
-            "figs/embeds/pca.png",
-            legend_title="s",
-            continuous=True,
+            f"figs/embeds/pcasel_{var}_{sys.argv[2]}.png",
+            legend_title=var,
+            continuous=True if var == "s" else False,
         )
     else:
         raise ValueError("Unknown mode: use 'continent' or 'pop' or 'selection'")

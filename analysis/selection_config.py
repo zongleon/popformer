@@ -2,6 +2,7 @@
 
 import numpy as np
 import pandas as pd
+import theme
 from evaluation.core import BaseEvaluator
 from evaluation.models import (
     popformer,
@@ -11,22 +12,13 @@ from evaluation.models import (
     summary_stat,
 )
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-TRAIN_DS = "pan_train_50000"
-# TEST_SIZES = [0.05, 0.5, 0.9, 0.95, 0.99]
-TEST_SIZES = [0.99]
-FORCE = False
-INVERT_SCORE_MODELS = {"tajimas_d", "n_snps"}
-
-# Canonical legend order — edit this list to change every plot at once.
+# Canonical legend order
 MODEL_ORDER = [
-    "popformer-0.05",
-    "popformer-ft-0.05",
-    "popformer-lp-0.05",
-    "FASTER-NN-0.05",
-    "resnet34-0.05",
+    "popformer",
+    "popformer-ft",
+    "popformer-lp",
+    "FASTER-NN",
+    "resnet34",
     "tajimas_d",
     "sfs_1",
     "sfs_1_count",
@@ -34,19 +26,15 @@ MODEL_ORDER = [
     "n_snps",
 ]
 
+INVERT_SCORE_MODELS = ["tajimas_d"]
+
 
 def sort_models(names: list[str]) -> list[str]:
     """Return *names* sorted according to MODEL_ORDER (unknowns go last)."""
     rank = {m: i for i, m in enumerate(MODEL_ORDER)}
-    return sorted(names, key=lambda n: rank.get(n, len(MODEL_ORDER)))
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-def score_transform(model_name: str, scores: np.ndarray) -> np.ndarray:
-    """Negate scores for statistics where lower ⇒ more selection-like."""
-    return -scores if model_name in INVERT_SCORE_MODELS else scores
+    return sorted(
+        names, key=lambda n: rank.get(theme.get_model_base_name(n), len(MODEL_ORDER))
+    )
 
 
 def normalize(x: np.ndarray) -> np.ndarray:
@@ -69,9 +57,7 @@ def aggregate_windows(scores: np.ndarray, sig_mask: np.ndarray, n: int):
 # ---------------------------------------------------------------------------
 # Model factories
 # ---------------------------------------------------------------------------
-def make_nn_models(
-    train_ds: str = TRAIN_DS, test_sizes: list[float] = TEST_SIZES, suffix=""
-) -> list:
+def make_nn_models(train_ds, test_sizes: list[float], suffix="") -> list:
     """Construct all neural-network-based selection models."""
     suffix = suffix + "-" if suffix != "" else ""
     models = []
@@ -115,12 +101,6 @@ def make_summary_stat_models() -> list:
         summary_stat.SummaryStatModel(
             model_name="sfs_1", summary_stat="sfs", sfs_index=1
         ),
-        # summary_stat.SummaryStatModel(
-        #     model_name="sfs_1_count",
-        #     summary_stat="sfs",
-        #     sfs_index=1,
-        #     proportional=False,
-        # ),
         summary_stat.SummaryStatModel(
             model_name="sfs_2", summary_stat="sfs", sfs_index=2
         ),
@@ -134,7 +114,7 @@ def make_summary_stat_models() -> list:
 def run_all(
     models: list,
     evaluators: list[BaseEvaluator],
-    force: bool = FORCE,
+    force: bool = False,
 ) -> tuple[dict, pd.DataFrame]:
     """Run every model,evaluator pair.  Returns (results_dict, summary_df)."""
     results = {}
@@ -142,7 +122,9 @@ def run_all(
         for evaluator in evaluators:
             print(f"Evaluating {model.model_name} on {evaluator.dataset_name}")
             predictions = evaluator.run(model, force)
-            res = evaluator.evaluate(predictions)
+            res = evaluator.evaluate(
+                predictions, invert_for_metrics=model.model_name in INVERT_SCORE_MODELS
+            )
             results[(model.model_name, evaluator.dataset_name)] = res
 
     df = pd.DataFrame.from_dict(results, orient="index")

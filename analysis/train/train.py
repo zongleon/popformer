@@ -112,6 +112,7 @@ training_args = TrainingArguments(
     bf16=True,
     ddp_find_unused_parameters=False,
     remove_unused_columns=False,
+    dataloader_num_workers=4,
     learning_rate=args.learning_rate,
 )
 

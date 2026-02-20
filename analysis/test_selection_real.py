@@ -9,13 +9,11 @@ null-distribution histograms from permutation tests.
 import numpy as np
 import pandas as pd
 
-from evaluation.models import popformer, summary_stat
+import theme
 from evaluation.evaluators import genome_classification
 from selection_config import (
-    FORCE,
     make_nn_models,
     make_summary_stat_models,
-    score_transform,
     normalize,
     aggregate_windows,
     run_all,
@@ -65,7 +63,7 @@ def build_evaluators(dataset_paths):
 # ---------------------------------------------------------------------------
 # Plotting helpers
 # ---------------------------------------------------------------------------
-def save_and_plot_regions(results, datasets):
+def save_regions(results, datasets):
     for ds in datasets:
         rd = collect_region_data(results, ds)
         if rd is None:
@@ -95,7 +93,7 @@ def plot_boxplots(results, datasets):
         ordered = sort_models([m for m, _, _ in items])
         item_map = {m: (mask, p) for m, mask, p in items}
         model_names = ordered
-        y_preds = [normalize(score_transform(m, item_map[m][1])) for m in ordered]
+        y_preds = [normalize(m, item_map[m][1]) for m in ordered]
         sig_mask = item_map[model_names[0]][0]
         genome_classification.plot_boxplot(
             y_preds=y_preds,
@@ -111,7 +109,7 @@ def plot_rate(results, datasets, suffix=""):
         for (m, d), res in results.items():
             if d != ds or "preds" not in res or "sig_mask" not in res:
                 continue
-            preds = score_transform(m, res["preds"])
+            preds = res["preds_for_metrics"]
             sig_mask = res["sig_mask"]
             valid = np.isfinite(preds)
             if not np.any(valid):
@@ -149,7 +147,7 @@ def plot_enrichment(results, datasets, suffix=""):
         for (m, d), res in results.items():
             if d != ds or "preds" not in res or "sig_mask" not in res:
                 continue
-            preds = score_transform(m, res["preds"])
+            preds = res["preds_for_metrics"]
             sig_mask = res["sig_mask"]
             valid = np.isfinite(preds)
             if not np.any(valid):
@@ -209,8 +207,8 @@ def plot_pos_vs_neg_called(results, datasets, suffix=""):
             ):
                 continue
 
-            pos_preds = score_transform(m, pos_res["preds"])
-            neg_preds = score_transform(m, neg_res["preds"])
+            pos_preds = pos_res["preds_for_metrics"]
+            neg_preds = neg_res["preds_for_metrics"]
             pos_mask = pos_res["sig_mask"]
             neg_mask = neg_res["sig_mask"]
 
@@ -267,12 +265,12 @@ def plot_correlations(results, models, genome_ds):
     for stat_label, stat_key in stats:
         if (stat_key, genome_ds) not in results:
             continue
-        stat_preds = score_transform(stat_key, results[(stat_key, genome_ds)]["preds"])
+        stat_preds = results[(stat_key, genome_ds)]["preds_for_metrics"]
         valid = ~np.isnan(stat_preds)
         genome_classification.plot_correlation(
             popf_preds[valid],
             stat_preds[valid],
-            y1lab=f"{model} score",
+            y1lab=f"{theme.get_model_base_name(model)} score",
             y2lab=stat_label,
             save_path=f"figs/genome_correlation_{stat_label.replace(' ', '_').lower()}_popf.png",
         )
@@ -299,7 +297,7 @@ if __name__ == "__main__":
     )
     evaluators = build_evaluators(GENOME_DATASETS)
 
-    results, df = run_all(all_models, evaluators, force=FORCE)
+    results, df = run_all(all_models, evaluators, force=False)
     models = sort_models(df["model"].unique().tolist())
     datasets = df["dataset"].unique().tolist()
 
@@ -310,7 +308,7 @@ if __name__ == "__main__":
     popf_models = [m for m in models if m.startswith("popformer")]
     unused_stat_models = ["sfs_1", "sfs_2", "n_snps"]
     all_models = list(set(models) - set(popf_models) - set(unused_stat_models)) + [
-        model for model in models if model.startswith("popformer-lp")
+        model for model in models if model.startswith("popformer-ft")
     ]
 
     pos_datasets = [ds for ds in datasets if ds.endswith("_pos")]
@@ -318,12 +316,12 @@ if __name__ == "__main__":
 
     for model_list, suffix in [(all_models, "all"), (popf_models, "popformer")]:
         subset_res = {(m, d): res for (m, d), res in results.items() if m in model_list}
-        plot_enrichment(subset_res, pos_datasets, suffix=suffix)
+        # plot_enrichment(subset_res, pos_datasets, suffix=suffix)
         plot_rate(subset_res, pos_datasets, suffix=suffix)
 
         plot_pos_vs_neg_called(subset_res, CEU_datasets, suffix=suffix)
 
-    save_and_plot_regions(results, pos_datasets)
-    plot_boxplots(results, pos_datasets)
+    save_regions(results, pos_datasets)
     plot_correlations(results, models, pos_datasets[0])
-    plot_null_distributions(results)
+    # plot_boxplots(results, pos_datasets)
+    # plot_null_distributions(results)

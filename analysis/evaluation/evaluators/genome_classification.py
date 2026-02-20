@@ -121,50 +121,14 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
             "fe_ci": fe_ci,
         }
 
-    def _rank_enrichment(self, predictions, region_mask, chroms, M=10000, seed=None):
-        rng = np.random.default_rng(seed)
-
-        # ranks: 1 = highest score
-        ranks = predictions.argsort()[::-1]
-        rank_pos = np.empty_like(ranks)
-        rank_pos[ranks] = np.arange(len(ranks))
-
-        obs = rank_pos[region_mask].mean()
-
-        # permute by per-chromosome circular shifts
-        null = np.empty(M)
-        chrom_bins = {c: np.where(chroms == c)[0] for c in np.unique(chroms)}
-
-        for b in range(M):
-            perm_pred = predictions.copy()
-            for c, idx in chrom_bins.items():
-                s = rng.integers(0, len(idx))
-                perm_pred[idx] = np.roll(predictions[idx], s)
-
-            r = perm_pred.argsort()[::-1]
-            rp = np.empty_like(r)
-            rp[r] = np.arange(len(r))
-            null[b] = rp[region_mask].mean()
-
-        p_emp = (1 + (null <= obs).sum()) / (1 + M)
-        return {
-            "obs": obs,
-            "p_emp": p_emp,
-            "null": null,
-            "null_mean": null.mean(),
-            "ci": np.percentile(null, [2.5, 97.5]),
-        }
-
-    def evaluate(self, predictions):
-        # preds = predictions
+    def evaluate(self, predictions, **kwargs):
         preds = predictions[:, 1]
-        preds = _windowed_mean(
-            predictions[:, 1],
-            window=15,
-            window_type="mean",
-        )
+        preds_metrics = preds
+        if kwargs.get("invert_for_metrics", False):
+            preds_metrics = 1 - preds
         results = {
             "preds": preds,
+            "preds_for_metrics": preds_metrics,
         }
         if hasattr(self, "start_pos"):
             # store plotting data for region predictions
@@ -458,7 +422,10 @@ def plot_rate_vs_threshold(
     fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
     for model_name, thresholds, fdr in sorted(fdr_series, key=lambda x: x[0]):
         ax.plot(
-            thresholds, fdr, label=model_name, color=theme.model_to_color(model_name)
+            thresholds,
+            fdr,
+            label=theme.get_model_base_name(model_name),
+            color=theme.model_to_color(model_name),
         )
     ax.set_xlabel("Fraction of genome called")
     ax.set_ylabel(rate_name)
@@ -491,12 +458,12 @@ def plot_called_pos_vs_neg(
         ax.plot(
             neg_called,
             pos_called,
-            label=model_name,
+            label=theme.get_model_base_name(model_name),
             color=theme.model_to_color(model_name),
         )
 
-    ax.set_xlabel("# negative regions called")
-    ax.set_ylabel("# positive regions called")
+    ax.set_xlabel("# Reich et al. negatives called")
+    ax.set_ylabel("# Grossman et al. positives called")
     ax.set_title(dataset_name)
     ax.grid(True, alpha=0.3, linestyle="--")
     ax.legend(loc="lower right")
