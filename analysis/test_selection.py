@@ -5,11 +5,10 @@ ROC-by-s grid for pan_test, accuracy-vs-train-size curves, and
 popformer ↔ summary-stat correlation scatter plots.
 """
 
-import numpy as np
 import matplotlib.pyplot as plt
-
+import numpy as np
 import theme
-from evaluation.evaluators import random_classification, genome_classification
+from evaluation.evaluators import genome_classification, random_classification
 from selection_config import (
     make_nn_models,
     make_summary_stat_models,
@@ -17,15 +16,14 @@ from selection_config import (
     sort_models,
 )
 
-
 SIMULATED_DATASETS = [
     "data/dataset/pan2CEU_test",
     "data/dataset/pan2CHB_test",
     "data/dataset/pan2YRI_test",
     "data/dataset/pan_4_test",
     "data/dataset/pan2_test_50000",
-    # "data/dataset/pan_3_demoid-0_balanced",
-    # "data/dataset/pan_3_demoid-1_balanced",
+    "data/dataset/pan_3_demoid-0_balanced",
+    "data/dataset/pan_3_demoid-1_balanced",
 ]
 
 
@@ -48,6 +46,7 @@ def plot_classification_curves(results, models, datasets, final_suffix=""):
                 trues,
                 scores,
                 models,
+                dataset=ds,
                 curve_type=typ,
                 save_path=f"figs/{ds}_{typ}{'_' + final_suffix if final_suffix else ''}.png",
             )
@@ -106,6 +105,7 @@ def plot_roc_by_s(results, models, dataset_name="pan_test"):
                 ax=ax,
                 baseify_model_names=True,
                 add_ax_labels=False,
+                legend_fontsize=10,
             )
     fig.supxlabel("False Positive Rate", fontsize=16)
     fig.supylabel("True Positive Rate", fontsize=16)
@@ -156,7 +156,7 @@ def plot_popf_vs_summary_stats(results, models, dataset_name="pan_test"):
             y2lab=stat,
             color_by=s[valid],
             color_by_label="s",
-            save_path=f"figs/{dataset_name}_correlation_{stat}_popf_ft_colored_by_s.png",
+            save_path=f"figs/{dataset_name}_correlation_{stat}.png",
         )
 
 
@@ -179,9 +179,6 @@ if __name__ == "__main__":
     if "accuracy" in df.columns:
         cols = ["model", "dataset", "accuracy", "precision", "recall", "auroc", "auprc"]
         print(df[cols].dropna().to_string())
-    if "obs" in df.columns:
-        cols = ["model", "dataset", "obs", "null_mean", "ci", "p_emp"]
-        print(df[cols].dropna().to_string())
 
     # All plots
     popf_models = [m for m in models if m.startswith("popformer") and "0.05" in m]
@@ -196,4 +193,4 @@ if __name__ == "__main__":
     for dataset_name in ["pan2CEU_test", "pan2CHB_test", "pan2YRI_test"]:
         plot_acc_vs_train_size(df, dataset_name=dataset_name)
         plot_roc_by_s(results, all_models, dataset_name=dataset_name)
-    plot_popf_vs_summary_stats(results, models)
+    plot_popf_vs_summary_stats(results, models, dataset_name="pan2CEU_test")

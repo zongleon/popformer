@@ -548,7 +548,7 @@ if __name__ == "__main__":
             {
                 "impute5": "IMPUTE 5",
                 "nearest neighbor baseline": "Nearest Neighbor",
-                "popformer-base": "popformer",
+                "popformer-base": "popformer-base",
             },
         )
         plt.figure(figsize=(8, 6))
@@ -557,7 +557,7 @@ if __name__ == "__main__":
             x="Mask Ratio",
             y=metric,
             hue="Method",
-            palette=theme.model_to_color,
+            palette=theme.model_color_map,
             errorbar=("sd"),
         )
         if metric == "Error Rate":

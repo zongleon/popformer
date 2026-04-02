@@ -5,7 +5,7 @@ vs background windows, FDR-vs-threshold curves, positive-vs-negative
 called-region curves, popformer ↔ summary-stat correlations, and
 null-distribution histograms from permutation tests.
 """
-
+import os
 import numpy as np
 import pandas as pd
 
@@ -21,6 +21,7 @@ from selection_config import (
     sort_models,
 )
 
+
 # ---------------------------------------------------------------------------
 # Datasets & evaluators
 # ---------------------------------------------------------------------------
@@ -29,17 +30,18 @@ GENOME_DATASETS = [
     "data/dataset/genome_CHB",
     "data/dataset/genome_YRI",
 ]
+GENOME_DATASETS = []
 KNOWN_POS_PATH = "data/SEL/sel.csv"
 KNOWN_NEG_PATH = "data/SEL/reichsel_negs.csv"
 
 AGG_WINDOW_N = 1
 
+pos_df = pd.read_csv(KNOWN_POS_PATH)
+neg_df = pd.read_csv(KNOWN_NEG_PATH)
+const1_df = pd.read_csv("data/matrices/bigregions/len200_ghist_const1.csv")
+const2_df = pd.read_csv("data/matrices/bigregions/len200_ghist_const2.csv")
 
 def build_evaluators(dataset_paths):
-    import os
-
-    pos_df = pd.read_csv(KNOWN_POS_PATH)
-    neg_df = pd.read_csv(KNOWN_NEG_PATH)
     evaluators = []
     for path in dataset_paths:
         evaluators.append(
@@ -56,6 +58,21 @@ def build_evaluators(dataset_paths):
                 dataset_name=os.path.basename(path) + "_neg",
             )
         )
+   
+    evaluators.append(
+        genome_classification.GenomeClassificationEvaluator(
+            "data/dataset/len200_ghist_const1",
+            known_selection_region_df=const1_df,
+            dataset_name="constant",
+        )
+    ) 
+    evaluators.append(
+        genome_classification.GenomeClassificationEvaluator(
+            "data/dataset/len200_ghist_const2",
+            known_selection_region_df=const2_df,
+            dataset_name="constant2",
+        )
+    )
 
     return evaluators
 
@@ -81,6 +98,24 @@ def save_regions(results, datasets):
             )
 
 
+def plot_regions(results, datasets, labels):
+    for ds, label in zip(datasets, labels):
+        rd = collect_region_data(results, ds)
+        if rd is None:
+            continue
+        model_names, preds_list, start_pos, end_pos, chrom = rd
+        
+        genome_classification.plot_region(
+            preds_list,
+            model_names,
+            start_pos,
+            end_pos,
+            window=15,
+            window_type="mean",
+            label_df=label,
+            save_path=f"figs/sweeps/{ds}_region_plot.png",
+        )
+
 def plot_boxplots(results, datasets):
     for ds in datasets:
         items = [
@@ -103,18 +138,12 @@ def plot_boxplots(results, datasets):
         )
 
 
-def plot_rate(results, datasets, suffix=""):
+def plot_rate(results, models, datasets, suffix=""):
     for ds in datasets:
         rate_series = []
-        for (m, d), res in results.items():
-            if d != ds or "preds" not in res or "sig_mask" not in res:
-                continue
-            preds = res["preds_for_metrics"]
-            sig_mask = res["sig_mask"]
-            valid = np.isfinite(preds)
-            if not np.any(valid):
-                continue
-            preds, sig_mask = preds[valid], sig_mask[valid]
+        for m in models:
+            preds = results[(m, ds)].get("preds_for_metrics")
+            sig_mask = results[(m, ds)].get("sig_mask")
             preds, sig_mask = aggregate_windows(preds, sig_mask, AGG_WINDOW_N)
             preds = normalize(preds)
 
@@ -135,7 +164,7 @@ def plot_rate(results, datasets, suffix=""):
             genome_classification.plot_rate_vs_threshold(
                 rate_series,
                 ds,
-                rate_name="TPR",
+                rate_name="Grossman et al. TPR",
                 save_path=f"figs/{ds}_tpr_vs_threshold{'' if suffix == '' else '_' + suffix}.png",
             )
 
@@ -178,7 +207,7 @@ def plot_enrichment(results, datasets, suffix=""):
             )
 
 
-def plot_pos_vs_neg_called(results, datasets, suffix=""):
+def plot_pos_vs_neg_called(results, models, datasets, suffix=""):
     """ROC-like curves: #pos regions called vs #neg regions falsely called."""
     base_datasets = sorted(
         {
@@ -191,12 +220,8 @@ def plot_pos_vs_neg_called(results, datasets, suffix=""):
         pos_ds = f"{base_ds}_pos"
         neg_ds = f"{base_ds}_neg"
 
-        model_names = sort_models(
-            [m for (m, d) in results if d == pos_ds and (m, neg_ds) in results]
-        )
-
         called_series = []
-        for m in model_names:
+        for m in models:
             pos_res = results.get((m, pos_ds), {})
             neg_res = results.get((m, neg_ds), {})
             if (
@@ -251,21 +276,21 @@ def plot_pos_vs_neg_called(results, datasets, suffix=""):
 
 def plot_correlations(results, models, genome_ds):
     """Scatter popformer-ft scores against each summary stat."""
-    model = next((m for m in models if "popformer" in m), None)
+    model = next((m for m in models if "popformer-ft" in m), None)
     if model is None or (model, genome_ds) not in results:
         return
     popf_preds = results[(model, genome_ds)]["preds"]
 
     stats = [
         ("Tajima's D", "tajimas_d"),
-        ("SFS[1]", "sfs_1"),
-        ("SFS[2]", "sfs_2"),
+        ("SFS 1", "sfs_1"),
+        ("SFS 2", "sfs_2"),
         ("Number of SNPs", "n_snps"),
     ]
     for stat_label, stat_key in stats:
         if (stat_key, genome_ds) not in results:
             continue
-        stat_preds = results[(stat_key, genome_ds)]["preds_for_metrics"]
+        stat_preds = results[(stat_key, genome_ds)]["preds"]
         valid = ~np.isnan(stat_preds)
         genome_classification.plot_correlation(
             popf_preds[valid],
@@ -307,21 +332,20 @@ if __name__ == "__main__":
 
     popf_models = [m for m in models if m.startswith("popformer")]
     unused_stat_models = ["sfs_1", "sfs_2", "n_snps"]
-    all_models = list(set(models) - set(popf_models) - set(unused_stat_models)) + [
-        model for model in models if model.startswith("popformer-ft")
-    ]
+    all_models = [m for m in models if "0.05" in m] + ["tajimas_d"]
 
     pos_datasets = [ds for ds in datasets if ds.endswith("_pos")]
     CEU_datasets = [ds for ds in datasets if "CEU" in ds]
 
     for model_list, suffix in [(all_models, "all"), (popf_models, "popformer")]:
-        subset_res = {(m, d): res for (m, d), res in results.items() if m in model_list}
         # plot_enrichment(subset_res, pos_datasets, suffix=suffix)
-        plot_rate(subset_res, pos_datasets, suffix=suffix)
+        plot_rate(results, model_list, pos_datasets, suffix=suffix)
 
-        plot_pos_vs_neg_called(subset_res, CEU_datasets, suffix=suffix)
+        plot_pos_vs_neg_called(results, model_list, CEU_datasets, suffix=suffix)
 
-    save_regions(results, pos_datasets)
-    plot_correlations(results, models, pos_datasets[0])
+    save_regions(results, pos_datasets + ["constant", "constant2"])
+    if pos_datasets:
+        plot_correlations(results, models, pos_datasets[0])
+    plot_regions(results, ["constant", "constant2"], [const1_df, const2_df])
     # plot_boxplots(results, pos_datasets)
     # plot_null_distributions(results)

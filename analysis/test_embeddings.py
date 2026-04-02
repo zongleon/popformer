@@ -102,7 +102,7 @@ def preds_window(model, ds):
 
 
 # pca on embeds
-def pca(embeds, lbls, figpath, legend_title="POP", continuous=False):
+def pca(embeds, lbls, figpath, legend_title="POP", continuous=False, alpha=None):
     embed_pca = PCA(random_state=SEED, n_components=16)
     embed_pca.fit(embeds)
 
@@ -119,16 +119,36 @@ def pca(embeds, lbls, figpath, legend_title="POP", continuous=False):
     plt.ylabel("variance")
     plt.savefig(f"figs/embeds/pca_ev_{legend_title}.png", dpi=300, bbox_inches="tight")
 
-    plt.figure(figsize=(10, 10), layout="constrained")
+    if continuous:
+        fig, axs = plt.subplots(
+            figsize=(11, 10),
+            nrows=1,
+            ncols=2,
+            layout="constrained",
+            width_ratios=[1, 0.05],
+        )
+    else:
+        plt.figure(figsize=(10, 10), layout="constrained")
     s = sns.scatterplot(
         data=embeds_df,
         x="PC1",
         y="PC2",
         hue=legend_title,
-        palette="viridis" if continuous else theme.pop_to_color,
+        palette="cividis" if continuous else theme.pop_to_color,
+        alpha=alpha,
+        ax=axs[0] if continuous else None,
         # legend="full",
     )
     s.ticklabel_format(axis="both", style="sci", scilimits=(0, 0))
+
+    if continuous:
+        norm = plt.Normalize(
+            vmin=embeds_df[legend_title].min(), vmax=embeds_df[legend_title].max()
+        )
+        sm = plt.cm.ScalarMappable(cmap="cividis", norm=norm)
+        sm.set_array([])
+        s.get_legend().remove()
+        s.figure.colorbar(sm, cax=axs[1], label=legend_title)
 
     sns.despine()
 

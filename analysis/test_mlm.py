@@ -279,7 +279,7 @@ if __name__ == "__main__":
         "models/popf-small"
     )
 
-    ds = load_from_disk("data/dataset/pt_tokenized")
+    ds = load_from_disk("data/dataset/pt")
     collator = HaploSimpleDataCollator(subsample=(64, 64), 
                                        mlm_probability=mlm,
                                        whole_snp_mask_probability=snpmlm,

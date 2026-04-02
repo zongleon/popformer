@@ -150,13 +150,13 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
                 true_windowed = self._get_windowed(windows, margin=0)
                 true_windowed_sig = true_windowed == 1
                 # preds = predictions[:, 1]
-                perm_results = self._permutation(
-                    preds,
-                    true_windowed_sig,
-                    M=10000,
-                    seed=42,
-                    roll=False,
-                )
+                # perm_results = self._permutation(
+                #     preds,
+                #     true_windowed_sig,
+                #     M=10000,
+                #     seed=42,
+                #     roll=False,
+                # )
                 # perm_results = self._rank_enrichment(
                 #     preds,
                 #     true_windowed_sig,
@@ -164,7 +164,7 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
                 #     M=10000,
                 #     seed=42,
                 # )
-                results.update(perm_results)
+                # results.update(perm_results)
 
                 # also results should include a significant windows mask
                 results["sig_mask"] = true_windowed_sig
@@ -233,7 +233,7 @@ def plot_region(
     window_type="mean",
     line=True,
 ):
-    ylbl = "pred. probability of selection"
+    ylbl = "score"
     pos = (end_pos + start_pos) // 2
 
     preds_adj = []
@@ -242,9 +242,7 @@ def plot_region(
             p = _windowed_mean(p, window=window, window_type=window_type)
         preds_adj.append(p)
 
-    fig, axs = plt.subplots(
-        len(preds_adj), 1, figsize=(12, 6 * len(preds_adj)), layout="constrained"
-    )
+    fig, axs = plt.subplots(len(preds_adj), 1, figsize=(12, 6 * len(preds_adj)))
     if len(preds_adj) == 1:
         axs = [axs]
     for p, label, ax in zip(preds_adj, model_names, axs):
@@ -267,8 +265,8 @@ def plot_region(
 
         if label_df is not None:
             for idx, r in label_df.iterrows():
-                x0 = r["start"]
-                x1 = r["end"]
+                x0 = r["start"] - 100000
+                x1 = r["end"] + 100000 # add some padding to make it more visible
                 if idx == 0:
                     label = "Selection region"
                 else:
@@ -280,7 +278,7 @@ def plot_region(
         ax.set_ylabel(ylbl)
         ax.grid(True, alpha=0.3, linestyle="--")
         ax.ticklabel_format(style="plain", axis="x", scilimits=(0, 0))
-    plt.savefig(save_path, dpi=300)
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()
 
 
@@ -297,7 +295,7 @@ def plot_boxplot(y_preds, model_names, sig_mask, save_path="figs/lp_boxplot.png"
                 }
             )
     df = pd.DataFrame(df)
-    fig, ax = plt.subplots(figsize=(10, 6), layout="constrained")
+    fig, ax = plt.subplots(figsize=(10, 6))
     sns.boxenplot(
         data=df,
         x="model",
@@ -307,12 +305,12 @@ def plot_boxplot(y_preds, model_names, sig_mask, save_path="figs/lp_boxplot.png"
     )
     ax.set_ylabel("normalized score")
     ax.grid(True, axis="y", alpha=0.3, linestyle="--")
-    plt.savefig(save_path, dpi=300)
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()
 
 
 def plot_histogram_with_line(y_pred, line_at, save_path="figs/lp_histline.png"):
-    fig, ax = plt.subplots(figsize=(10, 6), layout="constrained")
+    fig, ax = plt.subplots(figsize=(10, 6))
     sns.histplot(
         y_pred,
         stat="density",
@@ -320,7 +318,7 @@ def plot_histogram_with_line(y_pred, line_at, save_path="figs/lp_histline.png"):
     )
     ax.axvline(line_at, color="red", linestyle="--", label="")
     ax.grid(True, axis="y", alpha=0.3, linestyle="--")
-    plt.savefig(save_path, dpi=300)
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()
 
 
@@ -338,7 +336,7 @@ def plot_correlation(
     alpha=0.5,
     add_colorbar=True,
 ):
-    fig, ax = plt.subplots(figsize=(8, 8), layout="constrained")
+    fig, ax = plt.subplots(figsize=(8, 8))
 
     if color_by is None:
         sns.regplot(
@@ -346,7 +344,7 @@ def plot_correlation(
             y=y2,
             ax=ax,
             scatter_kws={"alpha": alpha},
-            line_kws=dict(color="lightblue"),
+            line_kws=dict(color="orange"),
         )
     else:
         # regression line (like test_selection_real) + scatter colored by `color_by`
@@ -355,7 +353,7 @@ def plot_correlation(
             y=y2,
             ax=ax,
             scatter=False,
-            line_kws=dict(color="lightblue"),
+            line_kws=dict(color="orange"),
         )
         sc = ax.scatter(y1, y2, c=color_by, cmap=cmap, alpha=alpha, s=18, linewidths=0)
 
@@ -372,7 +370,7 @@ def plot_correlation(
     ax.set_xlabel(y1lab)
     ax.set_ylabel(y2lab)
     ax.set_title(f"{y2lab} Spearman r = {spearmanr:.3f}")
-    plt.savefig(save_path, dpi=300)
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()
 
 
@@ -393,7 +391,7 @@ def plot_enrichment_at_k(
     save_path : str
         Where to save the figure.
     """
-    fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
+    fig, ax = plt.subplots(figsize=(8, 6))
     for model_name, k_fracs, enrichment in sorted(
         enrichment_series, key=lambda x: x[0]
     ):
@@ -409,7 +407,7 @@ def plot_enrichment_at_k(
     ax.set_title(f"Enrichment — {dataset_name}")
     ax.grid(True, alpha=0.3, linestyle="--")
     ax.legend(loc="upper right")
-    plt.savefig(save_path, dpi=300)
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()
 
 
@@ -419,20 +417,20 @@ def plot_rate_vs_threshold(
     rate_name="FNR",
     save_path="figs/fnr_vs_threshold.png",
 ):
-    fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
-    for model_name, thresholds, fdr in sorted(fdr_series, key=lambda x: x[0]):
+    fig, ax = plt.subplots(figsize=(8, 6))
+    for model_name, thresholds, fdr in fdr_series:
         ax.plot(
             thresholds,
             fdr,
             label=theme.get_model_base_name(model_name),
             color=theme.model_to_color(model_name),
         )
-    ax.set_xlabel("Fraction of genome called")
+    ax.set_xlabel("Fraction of genome predicted selected")
     ax.set_ylabel(rate_name)
-    ax.set_title(dataset_name)
+    ax.set_title(''.join([c for c in dataset_name if c.isupper()]))
     ax.grid(True, alpha=0.3, linestyle="--")
-    ax.legend(loc="upper right")
-    plt.savefig(save_path, dpi=300)
+    ax.legend(loc="lower right")
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()
 
 
@@ -453,8 +451,8 @@ def plot_called_pos_vs_neg(
     save_path : str
         Output figure path.
     """
-    fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
-    for model_name, neg_called, pos_called in sorted(called_series, key=lambda x: x[0]):
+    fig, ax = plt.subplots(figsize=(8, 6))
+    for model_name, neg_called, pos_called in called_series:
         ax.plot(
             neg_called,
             pos_called,
@@ -464,8 +462,8 @@ def plot_called_pos_vs_neg(
 
     ax.set_xlabel("# Reich et al. negatives called")
     ax.set_ylabel("# Grossman et al. positives called")
-    ax.set_title(dataset_name)
+    ax.set_title(''.join([c for c in dataset_name if c.isupper()]))
     ax.grid(True, alpha=0.3, linestyle="--")
     ax.legend(loc="lower right")
-    plt.savefig(save_path, dpi=300)
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()

@@ -15,6 +15,7 @@ from evaluation.models import (
 # Canonical legend order
 MODEL_ORDER = [
     "popformer",
+    "popformer-no-pretrain",
     "popformer-ft",
     "popformer-lp",
     "FASTER-NN",

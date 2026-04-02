@@ -10,6 +10,7 @@ from sklearn.metrics import (
 )
 import matplotlib.pyplot as plt
 import seaborn as sns
+from selection_config import MODEL_ORDER
 import theme
 
 
@@ -90,9 +91,7 @@ def plot_score_distributions(
     colors=None,
     save_path="figs/score_distributions.png",
 ):
-    fig, axs = plt.subplots(
-        len(model_names), 1, figsize=(8, 6 * len(model_names)), layout="constrained"
-    )
+    fig, axs = plt.subplots(len(model_names), 1, figsize=(8, 6 * len(model_names)))
 
     for i, (y_true, y_score, model_name) in enumerate(
         zip(y_trues, y_scores, model_names)
@@ -109,7 +108,7 @@ def plot_score_distributions(
     ax.set_xlabel("Predicted Score")
     ax.set_ylabel("Density")
     ax.grid(True, axis="y", alpha=0.3, linestyle="--")
-    plt.savefig(save_path, dpi=300)
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()
 
 
@@ -117,16 +116,18 @@ def plot_curves(
     y_trues,
     y_scores,
     model_names,
+    dataset=None,
     curve_type="roc",
     ax=None,
     add_ax_labels=True,
     baseify_model_names=True,
     save_path="figs/roc_curves.png",
+    legend_fontsize=None,
 ):
     new = False
     if ax is None:
         new = True
-        fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
+        fig, ax = plt.subplots(figsize=(8, 6))
 
     if not add_ax_labels:
         old_xlabel = ax.get_xlabel()
@@ -164,6 +165,13 @@ def plot_curves(
             **color_arg(model_name),
         )
 
+        ax.grid(True, axis="y", alpha=0.3, linestyle="--")
+        if legend_fontsize is not None:
+            ax.legend(fontsize=legend_fontsize)
+    
+    if dataset is not None:
+        ax.set_title(theme.dataset_rename_map.get(dataset, dataset))
+
     if not add_ax_labels:
         ax.set_xlabel(old_xlabel)
         ax.set_ylabel(old_ylabel)
@@ -172,20 +180,21 @@ def plot_curves(
         if add_ax_labels:
             plt.xlabel(xlab)
             plt.ylabel(ylab)
-        plt.grid(True, axis="y", alpha=0.3, linestyle="--")
-        plt.savefig(save_path, dpi=300)
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
         plt.close()
 
 
 def plot_y_by_x(df_acc, y="accuracy", x="s_bin", save_path="figs/lp_acc_vs_s.png"):
-    fig, ax = plt.subplots(figsize=(8, 6), layout="constrained")
-    df_acc["model_base"] = df_acc["model"].apply(theme.get_model_base_name)
+    fig, ax = plt.subplots(figsize=(8, 6))
+    df_acc["model"] = df_acc["model"].apply(theme.get_model_base_name)
     sns.lineplot(
         data=df_acc,
         x=x,
         y=y,
-        hue="model_base",
-        style="model_base",
+        hue="model",
+        hue_order=[m for m in MODEL_ORDER if m in df_acc["model"].unique()],
+        style="model",
+        style_order=[m for m in MODEL_ORDER if m in df_acc["model"].unique()],
         errorbar="sd",
         palette=theme.model_color_map,
         markers=True,
@@ -194,7 +203,7 @@ def plot_y_by_x(df_acc, y="accuracy", x="s_bin", save_path="figs/lp_acc_vs_s.png
     ax.set_xlabel(x)
     ax.set_ylabel(y.title())
     ax.grid(True, axis="y", alpha=0.3, linestyle="--")
-    plt.savefig(save_path, dpi=300)
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()
 
 
