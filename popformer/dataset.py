@@ -377,10 +377,10 @@ def parse_file(filepath, args) -> Dataset:
     if os.path.isdir(filepath):
         return None
     ext = os.path.splitext(filepath)[1]
-    if ext == ".vcf":
+    if ext == ".vcf" or ext == ".gz":
         # convert to h5
-        newfile = filepath.replace(".vcf", ".h5")
-        allel.vcf_to_hdf5(filepath, newfile, fields=["CHROM", "GT", "POS"])
+        newfile = filepath.replace(".gz", "").replace(".vcf", ".h5")
+        allel.vcf_to_hdf5(filepath, newfile, fields=["CHROM", "GT", "POS"], overwrite=True)
         ext = ".h5"
         filepath = newfile
 
@@ -404,7 +404,7 @@ def parse_file(filepath, args) -> Dataset:
         return None
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(description="Process an input file/directory.")
     parser.add_argument(
         "input",
@@ -470,3 +470,7 @@ if __name__ == "__main__":
         dataset = parse_file(args.input, args)
 
     dataset.save_to_disk(args.output)
+
+
+if __name__ == "__main__":
+    main()

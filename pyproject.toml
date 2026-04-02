@@ -5,16 +5,25 @@ description = "Transformer models for haplotype matrices"
 authors = [{ name = "Leon Zong" }]
 license = { text = "MIT" }
 requires-python = ">=3.9"
+readme = "README.md"
 
 dependencies = [
     "torch",
-    "transformers",
+    "transformers<=4.55",
     "datasets",
-    "pandas"
+    "h5py",
+    "numpy",
+    "pandas",
+    "scikit-allel",
+    "scipy",
+    "tqdm",
+    "accelerate",
+    "scikit-learn",
+    "wandb",
+    "matplotlib",
+    "seaborn",
+    "msprime",
 ]
-
-[project.optional-dependencies]
-dev = ["wandb"]
 
 [build-system]
 requires = ["setuptools>=61.0"]

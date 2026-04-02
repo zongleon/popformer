@@ -421,7 +421,7 @@ def plot_region(preds_path, out_fig_path, window=0, label_df=None):
     plt.savefig(out_fig_path, dpi=300)
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=str, help="Path to dataset")
     parser.add_argument("--model", type=str, help="Path to model")
@@ -479,3 +479,7 @@ if __name__ == "__main__":
         plot_region(
             preds_path, args.plot_region, window=args.smooth_window, label_df=sel_df
         )
+
+
+if __name__ == "__main__":
+    main()
