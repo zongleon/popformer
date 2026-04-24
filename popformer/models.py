@@ -1,6 +1,7 @@
 from typing import Optional
 import torch
 import torch.nn as nn
+from jaxtyping import Float, Int, Shaped
 from transformers import RobertaForSequenceClassification
 from transformers.modeling_outputs import BaseModelOutputWithPoolingAndCrossAttentions
 from transformers.models.roberta.modeling_roberta import (
@@ -8,6 +9,7 @@ from transformers.models.roberta.modeling_roberta import (
     RobertaModel,
 )
 
+from . import typed
 from .modules import PopformerEncoder
 
 
@@ -19,16 +21,17 @@ class PopformerForMaskedLM(RobertaForMaskedLM):
         self.roberta = PopformerModel(config, add_pooling_layer=False)
         self.post_init()
 
+    @typed
     def forward(
         self,
-        input_ids,
-        distances,
-        attention_mask,
-        labels=None,
-        return_hidden_states=False,
-        return_attentions=False,
+        input_ids: Int[torch.Tensor, "batch n_haps n_snps"],
+        distances: Int[torch.Tensor, "batch n_snps n_snps"],
+        attention_mask: Shaped[torch.Tensor, "batch n_haps n_snps"] | None = None,
+        labels: Int[torch.Tensor, "batch n_haps n_snps"] | None = None,
+        return_hidden_states: bool = False,
+        return_attentions: bool = False,
         **kwargs,
-    ):
+    ) -> dict[str, torch.Tensor | tuple[list[torch.Tensor], list[torch.Tensor]] | None]:
         # Pass distances through to the model
         outputs = self.roberta(
             input_ids=input_ids,
@@ -69,8 +72,19 @@ class PopformerClassificationHead(nn.Module):
         # self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.out_proj = nn.Linear(config.hidden_size, config.num_labels)
 
-    def forward(self, features, **kwargs):
-        x = features.mean(dim=(1, 2))  # take mean across haps, snps
+    @typed
+    def forward(
+        self,
+        features: Float[torch.Tensor, "batch n_haps n_snps hidden"],
+        attention_mask: Shaped[torch.Tensor, "batch n_haps n_snps"] | None = None,
+        **kwargs,
+    ) -> Float[torch.Tensor, "batch num_labels"]:
+        if attention_mask is not None:
+            mask = attention_mask.to(features.dtype).unsqueeze(-1)
+            x = (features * mask).sum(dim=(1, 2))
+            x = x / mask.sum(dim=(1, 2)).clamp(min=1.0)
+        else:
+            x = features.mean(dim=(1, 2))  # take mean across haps, snps
         # x = self.layer_norm(x)
         # x = self.dense(x)
         # x = torch.tanh(x)
@@ -108,7 +122,13 @@ class PopformerClassificationAttnPoolingHead(nn.Module):
 
         self.out_proj = nn.Linear(hidden, config.num_labels)
 
-    def forward(self, features, attention_mask=None, **kwargs):
+    @typed
+    def forward(
+        self,
+        features: Float[torch.Tensor, "batch n_haps n_snps hidden"],
+        attention_mask: Shaped[torch.Tensor, "batch n_haps n_snps"] | None = None,
+        **kwargs,
+    ) -> Float[torch.Tensor, "batch num_labels"]:
         """
         features: (B, H, S, D)
         attention_mask: (B, H, S) with 1 for valid tokens, 0 for padding
@@ -116,7 +136,6 @@ class PopformerClassificationAttnPoolingHead(nn.Module):
         """
         x = features
         B, H, S, D = x.shape
-        device = x.device
 
         x_norm = self.layer_norm(x)
 
@@ -128,10 +147,18 @@ class PopformerClassificationAttnPoolingHead(nn.Module):
         # Flatten to (B, T) where T = H*S
         flat_scores = scores.view(B, -1)
 
+        if attention_mask is not None:
+            flat_mask = attention_mask.view(B, -1).bool()
+            flat_scores = flat_scores.masked_fill(
+                ~flat_mask, torch.finfo(flat_scores.dtype).min
+            )
+
         weights = torch.softmax(flat_scores, dim=-1)
 
         # Ensure masked positions contribute 0, renormalize (avoids weirdness if many pads)
-        weights = weights / weights.sum(dim=-1, keepdim=True).clamp(min=1.0)
+        if attention_mask is not None:
+            weights = weights * flat_mask.to(weights.dtype)
+        weights = weights / weights.sum(dim=-1, keepdim=True).clamp(min=1e-12)
 
         weights = weights.view(B, H, S)  # (B, H, S)
 
@@ -142,7 +169,7 @@ class PopformerClassificationAttnPoolingHead(nn.Module):
         return self.out_proj(pooled)
 
 
-class PopformerForWindowClassification(RobertaForSequenceClassification):
+class PopformerForWindowClassification(RobertaForSequenceClassification): 
     """RobertaForSequenceClassification that accepts distances in forward pass."""
 
     def __init__(self, config):
@@ -156,26 +183,33 @@ class PopformerForWindowClassification(RobertaForSequenceClassification):
             self.classifier = PopformerClassificationHead(config)
         self.post_init()
 
+    @typed
     def forward(
         self,
-        input_ids=None,
-        distances=None,
-        attention_mask=None,
-        labels=None,
-        return_hidden_states=False,
+        input_ids: Int[torch.Tensor, "batch n_haps n_snps"] | None = None,
+        distances: Int[torch.Tensor, "batch n_snps n_snps"] | None = None,
+        attention_mask: Shaped[torch.Tensor, "batch n_haps n_snps"] | None = None,
+        labels: Float[torch.Tensor, " batch"] | Int[torch.Tensor, " batch"] | None = None,
+        return_hidden_states: bool = False,
         **kwargs,
-    ):
+    ) -> dict[str, torch.Tensor | None]:
+        token_mask = (
+            (input_ids != 5).to(dtype=torch.long)
+            if input_ids is not None
+            else attention_mask
+        )
+
         # Pass distances through to the model
         outputs = self.roberta(
             input_ids=input_ids,
-            attention_mask=attention_mask,
+            attention_mask=token_mask,
             distances=distances,
         )
 
         output = outputs[0]  # unpooled
         # print(output.mean(), output.std())
         logits = self.classifier(
-            output, attention_mask=attention_mask
+            output, attention_mask=token_mask
         )  # (batch_size, num_labels)
 
         loss = None
@@ -221,9 +255,20 @@ class PopformerSNPClassificationHead(nn.Module):
         self.dropout = nn.Dropout(classifier_dropout)
         self.out_proj = nn.Linear(config.hidden_size, config.num_labels)
 
-    def forward(self, features, **kwargs):
+    @typed
+    def forward(
+        self,
+        features: Float[torch.Tensor, "batch n_haps n_snps hidden"],
+        attention_mask: Shaped[torch.Tensor, "batch n_haps n_snps"] | None = None,
+        **kwargs,
+    ) -> Float[torch.Tensor, "batch n_snps num_labels"]:
         # Pool only over haplotypes, keep SNP dimension
-        x = features.mean(dim=1)  # (batch_size, n_snps, hidden_size)
+        if attention_mask is not None:
+            mask = attention_mask.to(features.dtype).unsqueeze(-1)
+            x = (features * mask).sum(dim=1)
+            x = x / mask.sum(dim=1).clamp(min=1.0)
+        else:
+            x = features.mean(dim=1)  # (batch_size, n_snps, hidden_size)
         x = self.layer_norm(x)
         x = self.dropout(x)
         x = self.dense(x)
@@ -244,24 +289,35 @@ class PopformerForSNPClassification(RobertaForSequenceClassification):
         self.classifier = PopformerSNPClassificationHead(config)
         self.post_init()
 
+    @typed
     def forward(
         self,
-        input_ids=None,
-        distances=None,
-        attention_mask=None,
-        labels=None,
-        return_hidden_states=False,
+        input_ids: Int[torch.Tensor, "batch n_haps n_snps"] | None = None,
+        distances: Int[torch.Tensor, "batch n_snps n_snps"] | None = None,
+        attention_mask: Shaped[torch.Tensor, "batch n_haps n_snps"] | None = None,
+        labels: Float[torch.Tensor, "batch n_snps"]
+        | Int[torch.Tensor, "batch n_snps"]
+        | None = None,
+        return_hidden_states: bool = False,
         **kwargs,
-    ):
+    ) -> dict[str, torch.Tensor | None]:
+        token_mask = (
+            (input_ids != 5).to(dtype=torch.long)
+            if input_ids is not None
+            else attention_mask
+        )
+
         # Pass distances through to the model
         outputs = self.roberta(
             input_ids=input_ids,
-            attention_mask=attention_mask,
+            attention_mask=token_mask,
             distances=distances,
         )
 
         output = outputs[0]  # (batch_size, n_haps, n_snps, hidden_size)
-        logits = self.classifier(output)  # (batch_size, n_snps, num_labels)
+        logits = self.classifier(
+            output, attention_mask=token_mask
+        )  # (batch_size, n_snps, num_labels)
 
         loss = None
         if labels is not None:
@@ -305,14 +361,16 @@ class PopformerModel(RobertaModel):
         # remove absolute position embeddings
         self.embeddings.position_embeddings = None
         self.encoder = PopformerEncoder(config)
+        self.pad_token_id = 5
 
+    @typed
     def forward(
         self,
-        input_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        distances: Optional[torch.Tensor] = None,
+        input_ids: Optional[Int[torch.Tensor, "batch n_haps n_snps"]] = None,
+        attention_mask: Shaped[torch.Tensor, "batch n_haps n_snps"] | None = None,
+        distances: Int[torch.Tensor, "batch n_snps n_snps"] | None = None,
         return_attentions: bool = False,
-    ):
+    ) -> BaseModelOutputWithPoolingAndCrossAttentions:
         batch_size, n_haps, n_snps = input_ids.size()
         input_shape = (batch_size, n_haps * n_snps)  # Flatten for embeddings
         device = input_ids.device
@@ -330,9 +388,11 @@ class PopformerModel(RobertaModel):
         embedding_output = embedding_output.view(batch_size, n_haps, n_snps, -1)
         # print(embedding_output.size())
 
-        # Create attention mask for 2D input
-        if attention_mask is None:
-            attention_mask = torch.ones((batch_size, n_haps, n_snps), device=device)
+        token_mask = input_ids.ne(self.pad_token_id)
+        if attention_mask is None or attention_mask.dim() != 3:
+            attention_mask = token_mask
+        else:
+            attention_mask = attention_mask.bool() & token_mask
 
         encoder_outputs = self.encoder(
             embedding_output,
@@ -341,7 +401,9 @@ class PopformerModel(RobertaModel):
             return_attentions=return_attentions,
         )
 
-        sequence_output = encoder_outputs[0]
+        sequence_output = encoder_outputs[0] * attention_mask.unsqueeze(-1).to(
+            encoder_outputs[0].dtype
+        )
 
         # For pooling, we might want to pool over haplotypes or use a different strategy
         # mean over haplotypes

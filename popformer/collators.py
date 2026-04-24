@@ -1,4 +1,7 @@
 import torch
+from jaxtyping import Bool, Int
+
+from . import typed
 
 
 class MetadataCollator:
@@ -22,11 +25,11 @@ class RawMatrixCollator:
     that can handle variable-size inputs directly or where more preprocessing is
     performed downstream (sorting, etc).
 
-    This is a simple collator that:
-      - finds the single BOS and EOS columns,
-      - returns columns strictly between them,
-      - removes any all-pad rows,
-      - trims distances and attention_mask to the same column range.
+        This is a simple collator that:
+            - finds the single BOS and EOS columns,
+            - returns columns strictly between them,
+            - removes any all-pad rows,
+            - trims distances and attention_mask to the same row/column range.
 
     Returns lists of per-example tensors (no padding across the batch).
     """
@@ -77,10 +80,13 @@ class RawMatrixCollator:
                 d = d[start:end]
                 batch_dists.append(d)
 
-            # Trim attention_mask if present (either [n_cols] or [n_cols, n_cols])
+            # Trim attention_mask if present.
             if "attention_mask" in ex and ex["attention_mask"] is not None:
                 am = torch.as_tensor(ex["attention_mask"])
-                if am.dim() == 2 and am.shape[0] == am.shape[1]:
+                if am.dim() == 2 and am.shape == x.shape:
+                    am = am[keep_rows, :]
+                    am = am[:, :]
+                elif am.dim() == 2 and am.shape[0] == am.shape[1]:
                     am = am[start:end, start:end]
                 else:
                     am = am[start:end]
@@ -141,26 +147,32 @@ class HaploSimpleDataCollator:
         self.pad_batch = pad_batch
         self.label_dtype = label_dtype
 
-    def _hamming_dist_all(self, A_bool, row_bool):
+    @typed
+    def _hamming_dist_all(
+        self,
+        A_bool: Bool[torch.Tensor, "hap snp"],
+        row_bool: Bool[torch.Tensor, " snp"],
+    ) -> Int[torch.Tensor, " hap"]:
         """Compute Hamming distance from each row of A_bool to row_bool."""
         # A_bool, row_bool are boolean arrays
         return torch.count_nonzero(A_bool != row_bool, dim=1)
 
+    @typed
     def select_diverse_rows(
         self,
-        X: torch.Tensor,
+        X: Int[torch.Tensor, "hap snp"],
         k: int,
-    ):
+    ) -> Int[torch.Tensor, " {k}"]:
         """
-        Select k row indices from a binary matrix X (shape: [n, m]) to maximize diversity
+        Select k row indices from a binary matrix X (shape: [hap, snp]) to maximize diversity
         using greedy farthest-first traversal w.r.t. Hamming distance (max-min criterion).
 
         - Picks a random start row.
         - Repeatedly adds the row that maximizes the minimum Hamming distance to the selected set.
 
         Args:
-            X: Binary matrix (values in {0,1}); shape (n, m). dtype can be bool or int.
-            k: Number of rows to select; 1 <= k <= n.
+            X: Binary matrix (values in {0,1}); shape (hap, snp). dtype can be bool or int.
+            k: Number of rows to select; 1 <= k <= snp.
             seed: Optional random seed for reproducibility.
 
         Returns:
@@ -205,7 +217,10 @@ class HaploSimpleDataCollator:
 
         return torch.tensor(selected, dtype=torch.long)
 
-    def _torch_mask_tokens(self, inputs):
+    @typed
+    def _torch_mask_tokens(
+        self, inputs: Int[torch.Tensor, "batch hap snp"]
+    ) -> tuple[Int[torch.Tensor, "batch hap snp"], Int[torch.Tensor, "batch hap snp"]]:
         """
         Custom masking: oversample 1s for masking.
         Special tokens are any token not 0 or 1.
@@ -273,10 +288,6 @@ class HaploSimpleDataCollator:
 
         # Mask token replacement
         inputs[indices_masked] = self.mask_token_id
-        indices_replaced = (
-            torch.bernoulli(torch.full(labels.shape, 1.0)).bool() & masked_indices
-        )
-        inputs[indices_replaced] = self.mask_token_id
 
         return inputs, labels
 
@@ -361,12 +372,14 @@ class HaploSimpleDataCollator:
             input_ids = input_ids[selected, :max_len]
             distances = distances[:max_len]
 
-            n_snps = input_ids.shape[1]
-            attention_masks = torch.ones((n_snps, n_snps), dtype=torch.long)
+            attention_masks = torch.ones_like(input_ids).bool()
 
+            pad_rows = (input_ids == self.pad_token_id).all(dim=1)
             pad_cols = (input_ids == self.pad_token_id).all(dim=0)
+            if pad_rows.any():
+                attention_masks[pad_rows, :] = False
             if pad_cols.any():
-                attention_masks[:, pad_cols] = 0
+                attention_masks[:, pad_cols] = False
 
             # print("input ids shape ", input_ids.size())
 

@@ -23,6 +23,8 @@ dependencies = [
     "matplotlib",
     "seaborn",
     "msprime",
+    "jaxtyping",
+    "beartype",
 ]
 
 [build-system]
@@ -31,3 +33,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["popformer"]
+
+[tool.ruff.lint]
+ignore = ["F722"]

@@ -29,9 +29,10 @@ class Tokenizer:
     MASK_TOKEN = 4
     PAD_TOKEN = 5
 
-    def __init__(self, max_haps: int, num_snps: int):
+    def __init__(self, max_haps: int, num_snps: int, major_minor_flip=True):
         self.max_haps = max_haps
         self.num_snps = num_snps
+        self.major_minor_flip = major_minor_flip
 
     def __call__(self, sample: np.ndarray) -> np.ndarray:
         return self.tokenizer(sample)
@@ -40,14 +41,19 @@ class Tokenizer:
         return {
             "max_haps": self.max_haps,
             "num_snps": self.num_snps,
+            "major_minor_flip": self.major_minor_flip,
         }
 
     def tokenizer(self, sample: np.ndarray) -> np.ndarray:
-        # TODO investigate
-        # hacky fix
         if np.any(sample[:, :, 0] == 2):
             raise ValueError("Genotype matrix has unexpected value 2.")
-        # sample[:, :, 0][sample[:, :, 0] == 2] = 1
+
+        # ensure major/minor
+        if self.major_minor_flip:
+            # ignore 4s for masked positions when calculating major allele
+            allele_sums = np.sum(sample[:, :, 0] * (sample[:, :, 0] != self.MASK_TOKEN), axis=0)
+            major_allele = (allele_sums < (sample.shape[0] // 2)).astype(np.int8)
+            sample[:, :, 0] = np.where(sample[:, :, 0] == self.MASK_TOKEN, self.MASK_TOKEN, sample[:, :, 0] ^ major_allele)
 
         # padding
         n_haps = min(sample.shape[0], self.max_haps)
@@ -55,20 +61,29 @@ class Tokenizer:
         n_pad_haps = self.max_haps - n_haps
         n_pad_snps = self.num_snps - n_snps
 
+        # truncation if needed. take window centered around middle if too many
+        if sample.shape[1] > self.num_snps:
+            mid = sample.shape[1] // 2
+            snp_start = max(0, mid - self.num_snps // 2)
+            snp_end = snp_start + self.num_snps
+        else:
+            snp_start = 0
+            snp_end = sample.shape[1]
+
         # start and end tokens
         bos_vec = np.full((n_haps, 1), self.BOS_TOKEN)
         eos_vec = np.full((n_haps, 1), self.EOS_TOKEN)
         zeros_vec = np.zeros((n_haps, 1))
 
-        haps = np.hstack([bos_vec, sample[:n_haps, :n_snps, 0], eos_vec]).astype(
+        haps = np.hstack([bos_vec, sample[:n_haps, snp_start:snp_end, 0], eos_vec]).astype(
             np.int8
         )
 
-        dists = np.hstack([zeros_vec, sample[:n_haps, :n_snps, 1], zeros_vec])
+        dists = np.hstack([zeros_vec, sample[:n_haps, snp_start:snp_end, 1], zeros_vec])
         # max_dist = np.max(np.abs(dists))
         # print(f"Distances max element: {max_dist}")
         # print(f"Distances shape: {dists.shape}, dtype: {dists.dtype}")
-        dists = dists.astype(np.float16)
+        # dists = dists.astype(np.float16)
 
         if n_pad_snps > 0:
             pad_vec = np.full((n_haps, n_pad_snps), self.PAD_TOKEN)
@@ -79,6 +94,13 @@ class Tokenizer:
         if n_pad_haps > 0:
             pad_vec = np.full((n_pad_haps, self.num_snps + 2), self.PAD_TOKEN)
             haps = np.vstack([haps, pad_vec])
+
+        # any nans?
+        if np.isnan(dists).any():
+            raise ValueError("Distances contain NaN values.")
+
+        if np.isnan(haps).any():
+            raise ValueError("Haplotypes contain NaN values.")
 
         return haps, dists[0]
 
@@ -278,6 +300,67 @@ def trees_to_dataset(
     return Dataset.from_generator(gen, features=features)
 
 
+def ms_to_dataset(filepath: str, tokenizer: Tokenizer, label=None, label_dtype=None, extra_vars=None, extra_vars_dtypes=None) -> Dataset:
+    # parse ms output file and convert to dataset
+    def gen():
+        ms = ""
+        with open(filepath, "r") as f:
+            ms = f.read().splitlines()
+
+        # first 3 lines are comments
+        cmd = ms[0]
+        n_haps = int(cmd.split()[1])
+        n_sims = int(cmd.split()[2])
+        length = int(cmd.split()[3])
+
+        sim_starts = [i for i, line in enumerate(ms) if line.startswith("//")]
+        assert len(sim_starts) == n_sims, f"Expected {n_sims} simulations but found {len(sim_starts)} in file."
+
+        for i, start_idx in enumerate(sim_starts):
+            # each sample starts with //, followed by 2 lines of metadata, then the haplotype matrix
+            end_idx = start_idx + n_haps + 2 + 1
+
+            matrix = []
+            positions = []
+            for j in range(start_idx, end_idx):
+                line = ms[j]
+                if line.startswith("//"):
+                    # new sample
+                    continue
+                elif line.startswith("segsites"):
+                    n_snps = int(line.split()[1])
+                elif line.startswith("positions"):
+                    positions = [float(x) for x in line.split()[1:]]
+                else:
+                    # haplotype matrix
+                    haps = np.array([int(x) for x in line.strip()])
+                    matrix.append(haps)
+
+            # use tokenizer to convert to input_ids and distances
+            matrix = np.array(matrix) # n_haps, n_snps
+            dist_vec = np.array([0] + [positions[j + 1] - positions[j] for j in range(len(positions) - 1)]) * length
+            dist_vec = dist_vec.astype(np.int32)
+            dist_vec = dist_vec[None, :].repeat(matrix.shape[0], axis=0)
+
+            region = np.dstack([matrix, dist_vec])
+            region, distances = tokenizer(region)
+
+            out = {
+                "input_ids": region,
+                "distances": distances,
+            }
+            if label is not None:
+                out["label"] = label
+            if extra_vars is not None:
+                for var_name, var_value in extra_vars.items():
+                    out[var_name] = var_value
+
+            yield out
+
+    features = make_features(tokenizer, label_dtype=label_dtype, label_resolution="window", extra_features=extra_vars_dtypes)
+
+    return Dataset.from_generator(gen, features=features)
+
 def parse_files_imputation(
     ref_file: str, tgt_file: str, tokenizer: Tokenizer, bed_file=None
 ) -> Dataset:
@@ -399,6 +482,8 @@ def parse_file(filepath, args) -> Dataset:
         return trees_to_dataset(
             filepath, tokenizer, args.window_jump, args.window_size, pop=args.pop
         )
+    elif ext == ".msout":
+        return ms_to_dataset(filepath, tokenizer)
     else:
         # non-.vcf, .h5 filetype
         return None
@@ -413,6 +498,7 @@ def main():
         "- hdf5"
         "- txt (in ms format)"
         "- .trees (output from stdpopsim)"
+        "- .msout (output from ms)"
         "- directories of any of the above formats",
     )
     parser.add_argument(
