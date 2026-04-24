@@ -135,6 +135,7 @@ class BaseHFEvaluator(BaseEvaluator):
             "min_freq",
             "goal_freq",
             "shoulder",
+            "f",
         ]
 
         for attr in extra_attrs:

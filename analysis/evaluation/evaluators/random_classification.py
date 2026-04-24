@@ -1,3 +1,5 @@
+import warnings
+import numpy as np
 from ..core import BaseHFEvaluator
 from sklearn.metrics import (
     PrecisionRecallDisplay,
@@ -7,6 +9,7 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
     roc_auc_score,
+    balanced_accuracy_score
 )
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -36,6 +39,7 @@ class RandomClassificationEvaluator(BaseHFEvaluator):
         results = {}
         pos_preds = predictions[:, 1]
         binary_preds = predictions.argmax(axis=1)
+        labels = self.labels
 
         pos_preds_metrics = pos_preds
         binary_preds_metrics = binary_preds
@@ -43,15 +47,17 @@ class RandomClassificationEvaluator(BaseHFEvaluator):
             pos_preds_metrics = 1 - pos_preds_metrics
             binary_preds_metrics = 1 - binary_preds_metrics
 
-        acc = accuracy_score(self.labels, binary_preds_metrics)
-        aucroc = roc_auc_score(self.labels, pos_preds_metrics)
-        auprc = average_precision_score(self.labels, pos_preds_metrics)
-        precision = precision_score(self.labels, binary_preds_metrics)
-        recall = recall_score(self.labels, binary_preds_metrics)
+        acc = accuracy_score(labels, binary_preds_metrics)
+        aucroc = roc_auc_score(labels, pos_preds_metrics)
+        auprc = average_precision_score(labels, pos_preds_metrics)
+        precision = precision_score(labels, binary_preds_metrics)
+        recall = recall_score(labels, binary_preds_metrics)
+        balanced_acc = balanced_accuracy_score(labels, binary_preds_metrics)
 
         facet_vars = [
             k
             for k in [
+                "f",
                 "s",
                 "shoulder",
                 "growth",
@@ -77,7 +83,8 @@ class RandomClassificationEvaluator(BaseHFEvaluator):
                 "recall": recall,
                 "preds": pos_preds,
                 "preds_for_metrics": pos_preds_metrics,
-                "trues": self.labels,
+                "trues": labels,
+                "balanced_accuracy": balanced_acc,
             }
         )
 
@@ -184,9 +191,12 @@ def plot_curves(
         plt.close()
 
 
-def plot_y_by_x(df_acc, y="accuracy", x="s_bin", save_path="figs/lp_acc_vs_s.png"):
-    fig, ax = plt.subplots(figsize=(8, 6))
-    df_acc["model"] = df_acc["model"].apply(theme.get_model_base_name)
+def plot_y_by_x(df_acc, y="accuracy", x="s_bin", save_path="figs/lp_acc_vs_s.png", logx=False, ax=None):
+    new = False
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 6))
+        new = True
+    df_acc["model"] = df_acc["model"].apply(theme.get_model_base_name).copy()
     sns.lineplot(
         data=df_acc,
         x=x,
@@ -201,10 +211,11 @@ def plot_y_by_x(df_acc, y="accuracy", x="s_bin", save_path="figs/lp_acc_vs_s.png
         ax=ax,
     )
     ax.set_xlabel(x)
-    ax.set_ylabel(y.title())
+    ax.set_ylabel(y.upper())
     ax.grid(True, axis="y", alpha=0.3, linestyle="--")
-    plt.savefig(save_path, dpi=300, bbox_inches="tight")
-    plt.close()
+    if logx:
+        ax.set_xscale("log")
+    if new:
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        plt.close()
 
-
-# def plot_acc_by_test_size()

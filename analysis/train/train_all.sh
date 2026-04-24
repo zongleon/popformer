@@ -3,7 +3,7 @@
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ROOT_DIR="${SCRIPT_DIR}/../.."
 
-TRAIN_NAME="CEU"
+TRAIN_NAME="discoal_consts_10000"
 DATASET_DIR="${ROOT_DIR}/data/dataset/${TRAIN_NAME}"
 MODEL_DIR="${ROOT_DIR}/models/"
 
@@ -13,7 +13,7 @@ python $ROOT_DIR/sweep.py \
 	--subsample 64 \
 	--save_features $ROOT_DIR/data/features/${TRAIN_NAME}_popf-small.npz 
 
-for TEST_SIZE in 0.05
+for TEST_SIZE in 0.05 0.5 0.95 0.99
 do
 	python $ROOT_DIR/analysis/train/finetune.py \
 		--mode selbin \

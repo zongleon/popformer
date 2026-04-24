@@ -80,12 +80,14 @@ class SummaryStatModel(BaseModel):
         mat = batch["input_ids"]  # shape (n_haps, n_snps)
         distances = batch["distances"]  # shape (n_snps,)
 
-        preds = np.empty((len(mat), 2))
+        preds = np.zeros((len(mat), 2), dtype=float)
         for i, (m, d) in enumerate(zip(mat, distances)):
             m = np.array(m).T  # transpose to (n_snps, n_haps)
             pos = np.cumsum(d, axis=-1)
 
             preds[i, 1] = self.predictor.predict(m, pos)
+            if np.isnan(preds[i, 1]):
+                preds[i, 1] = 0.0
 
         return preds
 
@@ -211,8 +213,10 @@ class SummaryStatPosModel(BaseModel):
     def run(self, batch):
         """Make predictions on the given batch of data."""
         n = len(batch[batch.keys()[0]])
-        preds = np.empty((n, 2))
+        preds = np.zeros((n, 2), dtype=float)
         for i, ex in enumerate(batch):
             preds[i, 1] = self.predictor.predict(ex)
+            if np.isnan(preds[i, 1]):
+                preds[i, 1] = 0.0
 
         return preds

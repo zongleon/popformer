@@ -1,5 +1,6 @@
 from ..core import BaseModel
 import torch
+import warnings
 from popformer.models import PopformerForWindowClassification
 from popformer.collators import HaploSimpleDataCollator
 
@@ -20,6 +21,7 @@ class PopformerModel(BaseModel):
         self.model = PopformerForWindowClassification.from_pretrained(
             model_path, torch_dtype=torch.float16
         )
+        assert all(not torch.isnan(p).any() for p in self.model.parameters()), "NaN detected in model weights!"
         if device is None:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.device = device
@@ -47,9 +49,12 @@ class PopformerModel(BaseModel):
             batch["distances"],
             batch["attention_mask"],
         )
+        logits = torch.clamp(output["logits"], min=-999, max=999)
+        preds = torch.softmax(logits, dim=1)
 
-        preds = torch.softmax(output["logits"], dim=1)
-        # preds = output["logits"]
+        if torch.isnan(preds).any():
+            warnings.warn("NaN detected in predictions!")
+            preds = torch.nan_to_num(preds, nan=0.0)
 
         # # l_1 - l_0
         # # print(preds)

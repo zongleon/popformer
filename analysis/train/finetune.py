@@ -137,11 +137,12 @@ if args.from_init:
 else:
     model = model.from_pretrained(
         args.pretrained,
-        # use_attn_pooling=args.attn_pool,
         classifier_dropout=0,
         num_labels=num_labels,
         torch_dtype=torch.bfloat16,
     )
+    if hasattr(model.config, "use_attn_pooling"):
+        model.config.use_attn_pooling = args.attn_pool
 
 if args.freeze_layers_up_to > 0:
     for param in model.roberta.embeddings.parameters():

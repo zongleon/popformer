@@ -30,7 +30,7 @@ GENOME_DATASETS = [
     "data/dataset/genome_CHB",
     "data/dataset/genome_YRI",
 ]
-GENOME_DATASETS = []
+# GENOME_DATASETS = []
 KNOWN_POS_PATH = "data/SEL/sel.csv"
 KNOWN_NEG_PATH = "data/SEL/reichsel_negs.csv"
 
@@ -317,7 +317,7 @@ def plot_null_distributions(results):
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     all_models = (
-        make_nn_models(train_ds="pan2CEU_train", test_sizes=[0.05], suffix="CEU")
+        make_nn_models(train_ds="discoal_CEU", test_sizes=[0.05], suffix="discoal_CEU")
         + make_summary_stat_models()
     )
     evaluators = build_evaluators(GENOME_DATASETS)

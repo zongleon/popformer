@@ -1,20 +1,25 @@
-from matplotlib.axes import Axes
-import numpy as np
-import pandas as pd
-import torch
-from torch.utils.data import DataLoader
-from popformer.models import PopformerForMaskedLM
-from popformer.collators import HaploSimpleDataCollator
-from popformer.dataset import parse_files_imputation, Tokenizer
-from tqdm import tqdm
-import matplotlib.pyplot as plt
-from scipy.stats import pearsonr
-from cyvcf2 import VCF
+import os
 import subprocess
 import time
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import seaborn as sns
 import theme
+import torch
+from cyvcf2 import VCF
+from matplotlib.axes import Axes
+from scipy.stats import pearsonr
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 
+from popformer.collators import HaploSimpleDataCollator
+from popformer.dataset import Tokenizer, parse_files_imputation
+from popformer.models import PopformerForMaskedLM
+
+MAF_BINS = np.linspace(0, 0.5, 51)
 
 def test_masked_lm(model_path, dataset):
     print("=" * 30)
@@ -81,7 +86,7 @@ def test_masked_lm(model_path, dataset):
     # ax2.imshow(color(gt_img[0]), aspect='auto', cmap='Greys', interpolation="none")
     # ax2.set_title("ground truth")
 
-    plt.savefig("figs/imputatoin/example.png", dpi=300, bbox_inches="tight")
+    plt.savefig("figs/imputation/example.png", dpi=300, bbox_inches="tight")
 
 
 def test(model, dataset):
@@ -274,14 +279,6 @@ def compute_metrics(preds, dataset, labels_path):
     )  # shape: (haps, batch*snps, 6)
     pred_labels = pred_labels[-len(labels["genotypes"].iloc[0]) :, mask]
 
-    # print out first 10 preds and corresponding labels
-    print()
-    for i in range(10):
-        true = labels["genotypes"].iloc[i]
-        pred = pred_labels[:, i, :2].argmax(axis=-1).astype(str).tolist()
-        print(f"True: {''.join([str(t) for t in true])}")
-        print(f"Pred: {''.join(pred)}")  # , Prob: {pred_labels[0, i, pred]:.4f}")
-
     # preprocess true labels
     true = labels["genotypes"].apply(lambda x: [int(c) for c in x]).tolist()
     true = np.array(true).T
@@ -316,11 +313,9 @@ def compute_metrics(preds, dataset, labels_path):
     error_rate = (true_genotypes != pred_genotypes).mean()
 
     # Binned by MAF
-    bins = [0, 0.05, 0.1, 0.2, 0.5, 1.0]
-    bin_labels = ["<0.05", "0.05-0.1", "0.1-0.2", "0.2-0.5", ">=0.5"]
     binned_results = []
-    for i in range(len(bins) - 1):
-        bin_mask = (labels["MAF"] >= bins[i]) & (labels["MAF"] < bins[i + 1])
+    for i in range(len(MAF_BINS) - 1):
+        bin_mask = (labels["MAF"] >= MAF_BINS[i]) & (labels["MAF"] < MAF_BINS[i + 1])
         if bin_mask.sum() == 0:
             continue
         true_bin = true_genotypes[:, bin_mask]
@@ -332,7 +327,7 @@ def compute_metrics(preds, dataset, labels_path):
         r_bin, _ = pearsonr(true_flat_bin, pred_flat_bin)
         r2_bin = r_bin**2
         error_rate_bin = (true_bin != pred_bin).mean()
-        binned_results.append((bin_labels[i], r_bin, r2_bin, error_rate_bin))
+        binned_results.append((MAF_BINS[i], r_bin, r2_bin, error_rate_bin))
 
     return r, r2, error_rate, binned_results
 
@@ -369,11 +364,9 @@ def test_impute(vcf_path, labels_path):
     error_rate = (true_flat != imps_flat).mean()
 
     # Binned by MAF
-    bins = [0, 0.05, 0.1, 0.2, 0.5, 1.0]
-    bin_labels = ["<0.05", "0.05-0.1", "0.1-0.2", "0.2-0.5", ">=0.5"]
     binned_results = []
-    for i in range(len(bins) - 1):
-        bin_mask = (labels["MAF"] >= bins[i]) & (labels["MAF"] < bins[i + 1])
+    for i in range(len(MAF_BINS) - 1):
+        bin_mask = (labels["MAF"] >= MAF_BINS[i]) & (labels["MAF"] < MAF_BINS[i + 1])
         if bin_mask.sum() == 0:
             continue
         true_bin = true[:, bin_mask]
@@ -385,7 +378,7 @@ def test_impute(vcf_path, labels_path):
         r_bin, _ = pearsonr(true_flat_bin, imps_flat_bin)
         r2_bin = r_bin**2
         error_rate_bin = (true_flat_bin != imps_flat_bin).mean()
-        binned_results.append((bin_labels[i], r_bin, r2_bin, error_rate_bin))
+        binned_results.append((MAF_BINS[i], r_bin, r2_bin, error_rate_bin))
 
     return r, r2, error_rate, binned_results
 
@@ -401,6 +394,7 @@ def run(seeds, mask_ratios, models):
         }
         for mr in mask_ratios
     }
+    maf_plot_data = []
 
     for mr in mask_ratios:
         for seed in seeds:
@@ -409,7 +403,7 @@ def run(seeds, mask_ratios, models):
             ref_vcf = f"data/imputation/masked/KHV_{mr}_{seed}_ref.h5"
             tgt_vcf = f"data/imputation/masked/KHV_{mr}_{seed}_tgt.h5"
             labels_path = f"data/imputation/masked/KHV_{mr}_{seed}_snps.csv"
-            tokenizer = Tokenizer(max_haps=256, num_snps=256)
+            tokenizer = Tokenizer(max_haps=256, num_snps=512, major_minor_flip=False)
             dataset = parse_files_imputation(ref_vcf, tgt_vcf, tokenizer)
 
             # Run predictions
@@ -461,19 +455,73 @@ def run(seeds, mask_ratios, models):
             impute_time = time.time() - start
 
             # Compute metrics
-            impute_r, impute_r2, impute_err, _ = test_impute(out_vcf, labels_path)
-            model_r, model_r2, model_err, _ = compute_metrics(
+            model_r, model_r2, model_err, model_binned = compute_metrics(
                 model_preds, dataset, labels_path
             )
             # model_r_large, model_r2_large, model_err_large, _ = compute_metrics(
             #     model_preds_large, dataset, labels_path
             # )
-            baseline1_r, baseline1_r2, baseline1_err, _ = compute_metrics(
+            baseline1_r, baseline1_r2, baseline1_err, baseline1_binned = compute_metrics(
                 baseline1_preds, dataset, labels_path
             )
-            baseline2_r, baseline2_r2, baseline2_err, _ = compute_metrics(
+            baseline2_r, baseline2_r2, baseline2_err, baseline2_binned = compute_metrics(
                 baseline2_preds, dataset, labels_path
             )
+            impute_r, impute_r2, impute_err, impute_binned = test_impute(
+                out_vcf, labels_path
+            )
+
+            for maf_bin, r_bin, r2_bin, err_bin in model_binned:
+                maf_plot_data.append(
+                    {
+                        "Method": "popformer-base",
+                        "Mask Ratio": int(mr),
+                        "Seed": int(seed),
+                        "MAF Bin": maf_bin,
+                        "r": r_bin,
+                        "r2": r2_bin,
+                        "Error Rate": err_bin,
+                    }
+                )
+
+            for maf_bin, r_bin, r2_bin, err_bin in impute_binned:
+                maf_plot_data.append(
+                    {
+                        "Method": "impute5",
+                        "Mask Ratio": int(mr),
+                        "Seed": int(seed),
+                        "MAF Bin": maf_bin,
+                        "r": r_bin,
+                        "r2": r2_bin,
+                        "Error Rate": err_bin,
+                    }
+                )
+
+            for maf_bin, r_bin, r2_bin, err_bin in baseline1_binned:
+                maf_plot_data.append(
+                    {
+                        "Method": "column freq baseline",
+                        "Mask Ratio": int(mr),
+                        "Seed": int(seed),
+                        "MAF Bin": maf_bin,
+                        "r": r_bin,
+                        "r2": r2_bin,
+                        "Error Rate": err_bin,
+                    }
+                )
+
+            for maf_bin, r_bin, r2_bin, err_bin in baseline2_binned:
+                maf_plot_data.append(
+                    {
+                        "Method": "nearest neighbor baseline",
+                        "Mask Ratio": int(mr),
+                        "Seed": int(seed),
+                        "MAF Bin": maf_bin,
+                        "r": r_bin,
+                        "r2": r2_bin,
+                        "Error Rate": err_bin,
+                    }
+                )
 
             # Store results
             results[mr]["popformer-base"].append(
@@ -503,17 +551,19 @@ def run(seeds, mask_ratios, models):
             #     f"Baseline1: r={baseline1_r:.4f}, r2={baseline1_r2:.4f}, err={baseline1_err:.4f}, time={baseline1_time:.2f}s"
             # )
             # print(f"Baseline2: r={baseline2_r:.4f}, r2={baseline2_r2:.4f}, err={baseline2_err:.4f}, time={baseline2_time:.2f}s")
-    return results
+    return results, maf_plot_data
 
 
 if __name__ == "__main__":
     RUN = False
+    os.makedirs("figs/imputation", exist_ok=True)
     # Define seeds and mask ratios to test
     seeds = [0, 1, 2]
     mask_ratios = [20, 40, 60, 80]
+    maf_summary_path = Path("imputation_results_maf_summary.csv")
 
     if RUN:
-        results = run(seeds, mask_ratios, models=None)
+        results, maf_plot_data = run(seeds, mask_ratios, models=None)
 
         # Prepare data for plotting
         plot_data = []
@@ -539,8 +589,18 @@ if __name__ == "__main__":
 
         df_plot = pd.DataFrame(plot_data)
         df_plot.to_csv("imputation_results_summary.csv", index=False)
+
+        df_maf_plot = pd.DataFrame(maf_plot_data)
+        df_maf_plot.to_csv(maf_summary_path, index=False)
     else:
         df_plot = pd.read_csv("imputation_results_summary.csv")
+        if maf_summary_path.exists():
+            df_maf_plot = pd.read_csv(maf_summary_path)
+        else:
+            df_maf_plot = pd.DataFrame()
+            print(
+                "Warning: imputation_results_maf_summary.csv not found, skipping MAF-binned plots."
+            )
 
     for metric in ["Error Rate", "r2"]:
         df_plot_remove_col = df_plot[df_plot["Method"] != "column freq baseline"]
@@ -568,6 +628,45 @@ if __name__ == "__main__":
             sns.despine(top=False)
         plt.tight_layout()
         plt.savefig(f"figs/imputation/{metric.replace(' ', '_').lower()}.png", dpi=300)
+
+    if not df_maf_plot.empty:
+        df_maf_plot = df_maf_plot[df_maf_plot["Method"] != "column freq baseline"].copy()
+        df_maf_plot["Method"] = df_maf_plot["Method"].replace(
+            {
+                "impute5": "IMPUTE 5",
+                "nearest neighbor baseline": "Nearest Neighbor",
+                "popformer-base": "popformer-base",
+            },
+        )
+
+        df_maf_plot = df_maf_plot[df_maf_plot["Mask Ratio"] == 80].copy()
+        # df_maf_plot["MAF Bin"] = pd.Categorical(
+        #     df_maf_plot["MAF Bin"], categories=MAF_BINS[:-1], ordered=True
+        # )
+        # df_maf_plot = df_maf_plot.dropna(subset=["Errol"])
+        # print(df_maf_plot)
+
+        for metric in ["Error Rate", "r2"]:
+            plt.figure(figsize=(8, 6))
+            sns.lineplot(
+                data=df_maf_plot,
+                x="MAF Bin",
+                y=metric,
+                hue="Method",
+                palette=theme.model_color_map,
+                # errorbar=("sd"),
+            )
+            if metric == "Error Rate":
+                plt.ylim(0, 0.2)
+                sns.despine()
+            else:
+                plt.ylim(0.0, 1)
+                sns.despine(top=False)
+            plt.tight_layout()
+            plt.savefig(
+                f"figs/imputation/{metric.replace(' ', '_').lower()}_vs_maf_mask80.png",
+                dpi=300,
+            )
 
     # Print summary tables
     print(f"\n{'=' * 80}")

@@ -61,25 +61,20 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
             df["end"] = df["end"] + margin
 
         # convert "chr1", etc
-        if "chrom" in df.columns:
-            if df["chrom"].dtype == object:
-                df["chrom"] = df["chrom"].apply(lambda x: int(x.replace("chr", "")))
-
-            df = df.set_index(["chrom", "start"])
-        else:
-            df = df.set_index(["start"])
-        df = df.sort_index()
+        if "chrom" in df.columns and df["chrom"].dtype == object:
+            df["chrom"] = df["chrom"].apply(lambda x: int(x.replace("chr", "")))
 
         grossman = []
 
         for chrom, start, end in windows:
-            try:
-                if "chrom" in df.index.names:
-                    window_df = df.loc[(chrom, slice(start, end)), :]
-                else:
-                    window_df = df.loc[slice(start, end), :]
-            except KeyError:
-                window_df = None
+            if "chrom" in df.columns:
+                window_df = df[
+                    (df["chrom"] == chrom)
+                    & (df["start"] <= end)
+                    & (df["end"] >= start)
+                ]
+            else:
+                window_df = df[(df["start"] <= end) & (df["end"] >= start)]
 
             if window_df is None or window_df.empty:
                 grossman.append(0)

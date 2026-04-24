@@ -18,7 +18,7 @@ colors = [
     "#00beff",
     "#fb49b0",
     "#00b25d",
-    "#cacaca",
+    "#787878",
 ]
 model_color_map = {
     "popformer-ft": colors[1],
@@ -28,7 +28,7 @@ model_color_map = {
     "popformer-no-pretrain": colors[0],
     "FASTER-NN": colors[3],
     "resnet34": colors[4],
-    "tajimas_d": colors[5],
+    "tajimas_d": colors[8],
     "IMPUTE 5": colors[3],
     "Nearest Neighbor": colors[4],
 }

@@ -10,14 +10,8 @@ import sys
 from datasets import Dataset, concatenate_datasets
 import pandas as pd
 from tqdm import tqdm
-import tskit
 
-from popformer.dataset import (
-    Tokenizer,
-    find_nonzero_block_cols,
-    get_pos_and_dist_vec,
-    make_features,
-)
+from popformer.dataset import Tokenizer, make_features, ms_to_dataset
 from popformer.real_data_random import RealDataRandomIterator
 
 
@@ -247,24 +241,49 @@ if __name__ == "__main__":
         dataset = Dataset.from_generator(gen, features=features)
         dataset.save_to_disk("data/dataset/pt")
 
-    elif mode == "realsim":
+    elif mode == "runselms":
+        pop = sys.argv[2]
+        s = [
+            "selected_0.001",
+            "selected_0.005",
+            "selected_0.01",
+            "selected_0.05",
+            "selected_0.1",
+        ]
+        # f = ["0.05", "0.25", "0.5", "0.75", "0.95"]
+        f = [None]
+        extra_vars_dtypes = {"s": "float16", "f": "float16"}
 
-        def gen():
-            for pop in ["CEU", "CHB", "YRI"]:
-                samples = np.load(f"../disc-interpret/dataset-{pop}/X.npy")
-                labels = np.load(f"../disc-interpret/dataset-{pop}/y.npy")
+        tokenizer = Tokenizer(max_haps=256, num_snps=512)
+        dss = []
+        dataset = ms_to_dataset(
+            f"data/discoal/output/{pop}/neutral.msout",
+            tokenizer=tokenizer,
+            label=0,
+            label_dtype="int8",
+            extra_vars={"s": 0.0, "f": 0.0},
+            extra_vars_dtypes=extra_vars_dtypes,
+        )
+        dss.append(dataset)
+        for sel in s:
+            for freq in f:
+                if freq is not None:
+                    path = f"data/discoal/output/{pop}/{sel}_{freq}.msout"
+                else:
+                    path = f"data/discoal/output/{pop}/{sel}.msout"
+                coeff = float(sel.split("_")[1])
+                dataset = ms_to_dataset(
+                    path,
+                    tokenizer=tokenizer,
+                    label=coeff > 0,
+                    label_dtype="int8",
+                    extra_vars={"s": coeff, "f": float(freq) if freq is not None else 0.95},
+                    extra_vars_dtypes=extra_vars_dtypes,
+                )
+                dss.append(dataset)
 
-                for sample, label in zip(samples, labels):
-                    sample = tokenizer(sample)
-                    yield {
-                        "input_ids": sample[..., 0],
-                        "distances": sample[0, :, 1],
-                        "label": label,
-                    }
-
-        features = make_features(label_dtype="int8", label_resolution="window")
-        dataset = Dataset.from_generator(gen, features=features)
-        dataset.save_to_disk("dataset/ft_realsim_tkns")
+        dataset = concatenate_datasets(dss)
+        dataset.save_to_disk(f"data/dataset/discoal_{pop.replace('/', '_')}")
 
     elif mode == "runsel":
         which = sys.argv[2]
@@ -402,61 +421,3 @@ if __name__ == "__main__":
                 plt.close()
 
                 dataset.save_to_disk(f"data/dataset/{which}{pop}_{name}")
-    elif mode == "runselold":
-        tokenizer = Tokenizer(max_haps=200, num_snps=512)
-
-        features = make_features(
-            tokenizer=tokenizer,
-            label_dtype="int8",
-            label_resolution="window",
-            # label_resolution="snp",
-            include_s=True,
-            # include_shoulder=True,
-            extra_features={},
-        )
-
-        def gen(pop: str):
-            for t, dir, sel, sel_bin in zip(
-                ["neutral_3000", "sel1_600", "sel01_600", "sel05_600", "sel025_600"],
-                ["neutral", "sel_10", "sel_01", "sel_05", "sel_025"],
-                [0, 0.1, 0.01, 0.05, 0.025],
-                [0, 1, 1, 1, 1],
-            ):
-                pop_name = (
-                    "CEU" if pop == "CEU" else "CHB_206" if pop == "CHB" else "YRI_216"
-                )
-                samples: np.ndarray = np.load(
-                    f"data/matrices/old/{pop}_Aug23/{dir}/matrices_regions_{pop_name}_{t}.npy"
-                )[:2400]
-                distances: np.ndarray = np.load(
-                    f"data/matrices/old/{pop}_Aug23/{dir}/distances_regions_{pop_name}_{t}.npy"
-                )[:2400]
-
-                for sample, dist in zip(samples, distances):
-                    sample = sample.T
-                    first, last = find_nonzero_block_cols(sample)
-
-                    sample = np.dstack(
-                        [
-                            sample[:, first:last],
-                            dist[None, first:last].repeat(sample.shape[0], axis=0),
-                        ]
-                    )
-                    region, distances = tokenizer(sample)
-                    distances = (distances * 50000).astype(int)
-                    # tqdm.write(
-                    #     f"Pop {pop}, sel {sel}, region {first}-{last}, shape {sample.shape} -> {region.shape}"
-                    # )
-                    # tqdm.write(f"Distances: {distances}")
-
-                    yield {
-                        "input_ids": region,
-                        "distances": distances,
-                        "label": sel_bin,
-                        "s": sel,
-                    }
-
-        # Save tokenized data
-        for pop in ["CEU", "CHB", "YRI"]:
-            dataset = Dataset.from_generator(lambda p=pop: gen(p), features=features)
-            dataset.save_to_disk(f"data/dataset/{pop}")
