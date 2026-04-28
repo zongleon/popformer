@@ -403,6 +403,7 @@ class HaploSimpleDataCollator:
         # let's truncate to the min number of haplotypes in the batch (after subsampling)
         min_haps = min(ids.shape[0] for ids in batch_input_ids)
         batch_input_ids = [ids[:min_haps] for ids in batch_input_ids]
+        batch_attention_masks = [mask[:min_haps] for mask in batch_attention_masks]
 
         input_ids = torch.stack(batch_input_ids)
         batch_attention_masks = torch.stack(batch_attention_masks)
