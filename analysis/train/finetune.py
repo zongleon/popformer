@@ -153,7 +153,8 @@ if args.freeze_layers_up_to > 0:
             param.requires_grad = False
 
 collator = HaploSimpleDataCollator(
-    subsample=(64, 64), subsample_type="diverse", label_dtype=typ
+    # subsample=(64, 64), subsample_type="diverse", label_dtype=typ
+    subsample=(64, 64), label_dtype=typ
 )
 # collator = HaploSimpleDataCollator(
 #     label_dtype=typ, subsample=(32, 32), subsample_type="random"

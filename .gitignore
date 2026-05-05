@@ -6,7 +6,9 @@ data/
 /models/
 preds/
 figs/
+figs_*/
 impute5/
+wandb/
 
 *.pt
 *.pth

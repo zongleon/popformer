@@ -19,7 +19,7 @@ from popformer.collators import HaploSimpleDataCollator
 from popformer.dataset import Tokenizer, parse_files_imputation
 from popformer.models import PopformerForMaskedLM
 
-MAF_BINS = np.linspace(0, 0.5, 51)
+MAF_BINS = np.linspace(0, 0.5, 11)
 
 def test_masked_lm(model_path, dataset):
     print("=" * 30)
@@ -48,11 +48,15 @@ def test_masked_lm(model_path, dataset):
     print("Counts of predicted tokens:")
     print({i: (counts[haps == 4] == i).sum() for i in range(7)})
 
+    # print the accuracy of the round-trip (accuracy of predicting non-masked tokens)
+    accuracy = (counts[haps != 4] == haps[haps != 4]).mean()
+    print(f"Round-trip accuracy: {accuracy:.4f}")
+
     # input_ids: (batch, haps, snps)
     ax0: Axes
     ax1: Axes
     # ax2: Axes
-    fig, (ax0, ax1) = plt.subplots(2, 1, sharex=True, sharey=True, figsize=(6, 10))
+    fig, (ax0, ax1, ax2) = plt.subplots(3, 1, sharex=True, sharey=True, figsize=(6, 20))
 
     def color(img):
         # img = img[:50]
@@ -78,6 +82,10 @@ def test_masked_lm(model_path, dataset):
     pr_img[mask] = counts[mask]
     ax1.imshow(color(pr_img[0]), aspect="auto", cmap="Greys", interpolation="none")
     ax1.set_title("predicted")
+
+    roundtrip_img = counts.copy()
+    ax2.imshow(color(roundtrip_img[0]), aspect="auto", cmap="Greys", interpolation="none")
+    ax2.set_title("round-trip")
 
     # # Show ground truth: input_ids with masked id 4 replaced by labels
     # gt_img = haps.copy()
@@ -556,11 +564,21 @@ def run(seeds, mask_ratios, models):
 
 if __name__ == "__main__":
     RUN = False
+    EXAMPLE = True
     os.makedirs("figs/imputation", exist_ok=True)
     # Define seeds and mask ratios to test
     seeds = [0, 1, 2]
     mask_ratios = [20, 40, 60, 80]
     maf_summary_path = Path("imputation_results_maf_summary.csv")
+
+    if EXAMPLE:
+        model = "models/popf-small"
+        ref_vcf = "data/imputation/masked/KHV_80_0_ref.h5"
+        tgt_vcf = "data/imputation/masked/KHV_80_0_tgt.h5"
+        labels_path = "data/imputation/masked/KHV_80_0_snps.csv"
+        tokenizer = Tokenizer(max_haps=256, num_snps=512, major_minor_flip=False)
+        dataset = parse_files_imputation(ref_vcf, tgt_vcf, tokenizer)
+        test_masked_lm(model, dataset)
 
     if RUN:
         results, maf_plot_data = run(seeds, mask_ratios, models=None)

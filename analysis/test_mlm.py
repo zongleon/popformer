@@ -12,16 +12,8 @@ from tqdm import tqdm
 import seaborn as sns
 import pandas as pd
 
-plt.style.use("seaborn-v0_8-talk")
+import theme # noqa: F401
 
-def test_model():
-    print("=" * 30)
-    print("Test: Show model")
-    model = PopformerForWindowClassification.from_pretrained(
-        "./models/hapberta2d_realsim/"
-    )
-
-    print(model)
 def test_masked_lm(inputs, model):
     print("=" * 30)
     print("Test: Masked performance")
@@ -92,7 +84,7 @@ def test_masked_lm(inputs, model):
     ax2.set_ylabel("Haplotypes")
     ax2.set_xlabel("SNPs")
 
-    plt.savefig("figs/ex_testmlm.png", dpi=300, bbox_inches="tight")
+    plt.savefig("figs/example/ex_testmlm.png", dpi=300, bbox_inches="tight")
     plt.close()
 
     return (lbls == predlbls).mean()
@@ -214,7 +206,7 @@ def test_distance():
     plt.ylabel("Count")
     plt.title("Histogram of pairwise distances in log buckets")
     plt.tight_layout()
-    plt.savefig("figs/distance_histogram_lin.png", dpi=300)
+    plt.savefig("figs/example/distance_histogram_lin.png", dpi=300)
 
 def test_selmodel(train=True):
 
@@ -267,7 +259,7 @@ def test_selmodel(train=True):
     plt.xlabel("Predicted logits")
     plt.ylabel("Count")
     plt.title("Histogram of predicted logits")
-    plt.savefig("figs/preds_histogram.png", dpi=300, bbox_inches="tight")
+    plt.savefig("figs/example/preds_histogram.png", dpi=300, bbox_inches="tight")
 
 if __name__ == "__main__":
     mlm = 0.75
@@ -305,7 +297,7 @@ if __name__ == "__main__":
         ci="sd",
     )
 
-    plt.savefig("figs/ex_acc.png", dpi=300, bbox_inches="tight")
+    plt.savefig("figs/example/ex_acc.png", dpi=300, bbox_inches="tight")
 
     # also print as table
     df.melt(var_name="method", value_name="accuracy").groupby("method").agg(["mean", "std"]).to_csv("mlm_accuracies.csv")

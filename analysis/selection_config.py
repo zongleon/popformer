@@ -71,15 +71,15 @@ def make_nn_models(train_ds, test_sizes: list[float], suffix="") -> list:
                 subsample_type="diverse",
             ),
             popformer.PopformerModel(
-                f"models/selbin-ft-sm-{train_ds}-{ts}",
-                f"popformer-ft-{suffix}{ts}",
+                f"models/selbin-ft-discoal-{train_ds}-{ts}", # TODO
+                f"popformer-ftdlrr-{suffix}{ts}",
                 subsample=(64, 64),
-                subsample_type="diverse",
+                subsample_type="random",
             ),
             popformer_lp.PopformerLPModel(
-                "models/popf-small",
-                f"models/lp/{train_ds}_popf-small-{ts}_lp.pkl",
-                f"popformer-lp-{suffix}{ts}",
+                "models/popf-base-discoal",
+                f"models/lp/{train_ds}_popf-base-discoal-{ts}_lp.pkl",
+                f"popformer-lpdl-{suffix}{ts}",
                 subsample=(64, 64),
                 subsample_type="diverse",
             ),

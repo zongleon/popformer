@@ -9,11 +9,11 @@ MODEL_DIR="${ROOT_DIR}/models/"
 
 python $ROOT_DIR/sweep.py \
 	--data $DATASET_DIR \
-	--model $MODEL_DIR/popf-small/ \
+	--model $MODEL_DIR/popf-base-discoal-low/ \
 	--subsample 64 \
-	--save_features $ROOT_DIR/data/features/${TRAIN_NAME}_popf-small.npz 
+	--save_features $ROOT_DIR/data/features/${TRAIN_NAME}_popf-base-discoal.npz 
 
-for TEST_SIZE in 0.05 0.5 0.95 0.99
+for TEST_SIZE in 0.05
 do
 	python $ROOT_DIR/analysis/train/finetune.py \
 		--mode selbin \
@@ -22,7 +22,7 @@ do
 		--batch-size 2 \
 		--gradient-accumulation-steps 8 \
 		--output-path $MODEL_DIR/selbin-pt-sm-${TRAIN_NAME}-${TEST_SIZE} \
-		--pretrained $MODEL_DIR/popf-small/ \
+		--pretrained $MODEL_DIR/popf-base-discoal/ \
 		--from-init \
 		--test-size $TEST_SIZE
 
@@ -32,12 +32,13 @@ do
 		--num-epochs 100 \
 		--batch-size 2 \
 		--gradient-accumulation-steps 8 \
-		--output-path $MODEL_DIR/selbin-ft-sm-${TRAIN_NAME}-${TEST_SIZE} \
-		--pretrained $MODEL_DIR/popf-small/ \
+		--output-path $MODEL_DIR/selbin-ft-discoal-${TRAIN_NAME}-${TEST_SIZE} \
+		--pretrained $MODEL_DIR/popf-base-discoal/ \
+		--learning-rate 1e-5 \
 		--test-size $TEST_SIZE
 
-	python $ROOT_DIR/analysis/train/lp.py popf-small ${TRAIN_NAME} ${TEST_SIZE}
+	# python $ROOT_DIR/analysis/train/lp.py popf-base-discoal ${TRAIN_NAME} ${TEST_SIZE}
 
-	python $ROOT_DIR/analysis/train/fasternn.py $DATASET_DIR ${TEST_SIZE}
-	python $ROOT_DIR/analysis/train/schrider_resnet.py $DATASET_DIR ${TEST_SIZE}
+	# python $ROOT_DIR/analysis/train/fasternn.py $DATASET_DIR ${TEST_SIZE}
+	# python $ROOT_DIR/analysis/train/schrider_resnet.py $DATASET_DIR ${TEST_SIZE}
 done

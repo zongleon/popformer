@@ -7,7 +7,7 @@ import os
 import allel
 import numpy as np
 import sys
-from datasets import Dataset, concatenate_datasets
+from datasets import Dataset, concatenate_datasets, load_from_disk
 import pandas as pd
 from tqdm import tqdm
 
@@ -240,6 +240,20 @@ if __name__ == "__main__":
         )
         dataset = Dataset.from_generator(gen, features=features)
         dataset.save_to_disk("data/dataset/pt")
+    elif mode == "pt_sims":
+        # combine discoal simulations for runselms into one dataset
+        # only neutral
+        types = ["consts", "bottlenecks"]
+        sizes = {"consts": [1000, 5000, 10000, 50000, 100000], "bottlenecks": [100, 1000, 2500, 5000, 10000]}
+        dss = []
+        for t in types:
+            for s in sizes[t]:
+                dataset = load_from_disk(f"data/dataset/discoal_{t}_{s}")
+                dss.append(dataset)
+
+        dataset = concatenate_datasets(dss)
+        dataset = dataset.filter(lambda x: x["label"] == 0)
+        dataset.save_to_disk("data/dataset/pt_discoal")
 
     elif mode == "runselms":
         pop = sys.argv[2]

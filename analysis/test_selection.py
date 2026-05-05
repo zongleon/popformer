@@ -329,6 +329,6 @@ if __name__ == "__main__":
     df["bottleneck"] = df["dataset"].apply(lambda x: int(x.split("_")[-1]) if "discoal_bottlenecks" in x else np.nan)
 
     # for metric in ["auprc", "auprc_strong"]:
-    for metric in ["balanced_accuracy"]:
+    for metric in ["auprc", "balanced_accuracy"]:
         plot_acc_by_x(df, "bottleneck", trained_on_line=10000, x_labels=btl_labels, flip_x=True, metric=metric)
         plot_acc_by_x(df, "N", trained_on_line=10000, metric=metric, log_x=True)

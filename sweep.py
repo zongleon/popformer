@@ -45,7 +45,7 @@ def sweep(
 
     collator = HaploSimpleDataCollator(
         subsample=(subsample, subsample) if subsample else None,
-        subsample_type="diverse",
+        # subsample_type="diverse",
     )
 
     loader = DataLoader(
