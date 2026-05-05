@@ -1,0 +1,45 @@
+{
+  "task": "finetune",
+  "dataset_path": "./data/dataset/discoal_consts_10000",
+  "test_size": 0.05,
+  "defaults": {
+    "mode": "selbin",
+    "num_epochs": 10,
+    "batch_size": 2,
+    "gradient_accumulation_steps": 8
+  },
+  "models": [
+    {
+      "name": "selbin-from-init",
+      "pretrained": "./models/popf-base-discoal",
+      "output_path": "./models/selbin-pt-sm-discoal_consts_10000-0.05",
+      "from_init": true
+    },
+    {
+      "name": "selbin-finetune",
+      "pretrained": "./models/popf-base-discoal",
+      "output_path": "./models/selbin-ft-discoal-discoal_consts_10000-0.05",
+      "learning_rate": 1e-5
+    },
+    {
+      "name": "fasternn-baseline",
+      "task": "command",
+      "command": [
+        "{python}",
+        "analysis/train/fasternn.py",
+        "{dataset_path}",
+        "{test_size}"
+      ]
+    },
+    {
+      "name": "schrider-resnet-baseline",
+      "task": "command",
+      "command": [
+        "{python}",
+        "analysis/train/schrider_resnet.py",
+        "{dataset_path}",
+        "{test_size}"
+      ]
+    }
+  ]
+}

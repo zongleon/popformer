@@ -17,7 +17,8 @@ wandb/
 *.csv
 *.gz*
 *.bed
-*.h5 
+*.h5
 *.arrow
 *.json
+!**/configs/*.json
 *.npy

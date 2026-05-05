@@ -4,11 +4,12 @@ Some specialty dataloaders for specific datasets.
 
 import glob
 import os
+import sys
+
 import allel
 import numpy as np
-import sys
-from datasets import Dataset, concatenate_datasets, load_from_disk
 import pandas as pd
+from datasets import Dataset, concatenate_datasets, load_from_disk
 from tqdm import tqdm
 
 from popformer.dataset import Tokenizer, make_features, ms_to_dataset
@@ -244,7 +245,10 @@ if __name__ == "__main__":
         # combine discoal simulations for runselms into one dataset
         # only neutral
         types = ["consts", "bottlenecks"]
-        sizes = {"consts": [1000, 5000, 10000, 50000, 100000], "bottlenecks": [100, 1000, 2500, 5000, 10000]}
+        sizes = {
+            "consts": [1000, 5000, 10000, 50000, 100000],
+            "bottlenecks": [100, 1000, 2500, 5000, 10000],
+        }
         dss = []
         for t in types:
             for s in sizes[t]:
@@ -252,7 +256,7 @@ if __name__ == "__main__":
                 dss.append(dataset)
 
         dataset = concatenate_datasets(dss)
-        dataset = dataset.filter(lambda x: x["label"] == 0)
+        # dataset = dataset.filter(lambda x: x["label"] == 0)
         dataset.save_to_disk("data/dataset/pt_discoal")
 
     elif mode == "runselms":
@@ -291,7 +295,10 @@ if __name__ == "__main__":
                     tokenizer=tokenizer,
                     label=coeff > 0,
                     label_dtype="int8",
-                    extra_vars={"s": coeff, "f": float(freq) if freq is not None else 0.95},
+                    extra_vars={
+                        "s": coeff,
+                        "f": float(freq) if freq is not None else 0.95,
+                    },
                     extra_vars_dtypes=extra_vars_dtypes,
                 )
                 dss.append(dataset)
