@@ -32,6 +32,7 @@ parser.add_argument(
 parser.add_argument(
     "--batch-size", type=int, default=8, help="Batch size for training and evaluation"
 )
+parser.add_argument("--test-size", type=float, default=0.05, help="Evaluation split size")
 parser.add_argument(
     "--output-path",
     type=str,
@@ -46,7 +47,7 @@ args = parser.parse_args()
 dataset = load_from_disk(args.dataset_path)
 
 # Split dataset
-dataset = dataset.train_test_split(test_size=0.05)
+dataset = dataset.train_test_split(test_size=args.test_size, seed=42)
 train_dataset = dataset["train"]
 eval_dataset = dataset["test"]
 

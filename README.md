@@ -90,7 +90,27 @@ preds = np.concatenate(all_preds)
 
 ## Training
 
-end-to-end training example coming soon
+Use the JSON runner in [analysis/train/experiment_runner.py](/home/lzong/projects/popformer-revision/analysis/train/experiment_runner.py) for both pretraining and finetuning.
+
+```bash
+# pretraining
+python analysis/train/experiment_runner.py --config analysis/train/configs/pretrain-base.json
+
+# finetuning
+python analysis/train/experiment_runner.py --config analysis/train/configs/finetune-selbin.json
+
+# inspect the expanded commands without running them
+python analysis/train/experiment_runner.py --config analysis/train/configs/pretrain-base.json --dry-run
+```
+
+Keep configs minimal:
+
+- `dataset_path` sets the dataset.
+- `test_size` sets the train/test split.
+- `models` lists the runs to execute.
+- `defaults` holds shared options like epochs or batch size.
+
+For SLURM, the existing cluster scripts now just call the runner with a config file.
 
 ## Project structure
 
