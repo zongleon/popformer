@@ -9,9 +9,10 @@ import allel
 import numpy as np
 import tskit
 from datasets import Array2D, Dataset, Features, List, Value, concatenate_datasets
-from .real_data_random import RealDataRandomIterator
-from .util import process_gt_dist
 from tqdm import tqdm
+
+from .real_data_random import RealDataRandomIterator
+from .util import major_minor, process_gt_dist
 
 
 def get_pos_and_dist_vec(ts, snps_total, mask=None):
@@ -50,10 +51,7 @@ class Tokenizer:
 
         # ensure major/minor
         if self.major_minor_flip:
-            # ignore 4s for masked positions when calculating major allele
-            allele_sums = np.sum(sample[:, :, 0] * (sample[:, :, 0] != self.MASK_TOKEN), axis=0)
-            major_allele = (allele_sums < (sample.shape[0] // 2)).astype(np.int8)
-            sample[:, :, 0] = np.where(sample[:, :, 0] == self.MASK_TOKEN, self.MASK_TOKEN, sample[:, :, 0] ^ major_allele)
+            sample[:, :, 0], _ = major_minor(sample[:, :, 0])
 
         # padding
         n_haps = min(sample.shape[0], self.max_haps)
@@ -75,9 +73,9 @@ class Tokenizer:
         eos_vec = np.full((n_haps, 1), self.EOS_TOKEN)
         zeros_vec = np.zeros((n_haps, 1))
 
-        haps = np.hstack([bos_vec, sample[:n_haps, snp_start:snp_end, 0], eos_vec]).astype(
-            np.int8
-        )
+        haps = np.hstack(
+            [bos_vec, sample[:n_haps, snp_start:snp_end, 0], eos_vec]
+        ).astype(np.int8)
 
         dists = np.hstack([zeros_vec, sample[:n_haps, snp_start:snp_end, 1], zeros_vec])
         # max_dist = np.max(np.abs(dists))
@@ -300,7 +298,14 @@ def trees_to_dataset(
     return Dataset.from_generator(gen, features=features)
 
 
-def ms_to_dataset(filepath: str, tokenizer: Tokenizer, label=None, label_dtype=None, extra_vars=None, extra_vars_dtypes=None) -> Dataset:
+def ms_to_dataset(
+    filepath: str,
+    tokenizer: Tokenizer,
+    label=None,
+    label_dtype=None,
+    extra_vars=None,
+    extra_vars_dtypes=None,
+) -> Dataset:
     # parse ms output file and convert to dataset
     def gen():
         ms = ""
@@ -314,7 +319,9 @@ def ms_to_dataset(filepath: str, tokenizer: Tokenizer, label=None, label_dtype=N
         length = int(cmd.split()[3])
 
         sim_starts = [i for i, line in enumerate(ms) if line.startswith("//")]
-        assert len(sim_starts) == n_sims, f"Expected {n_sims} simulations but found {len(sim_starts)} in file."
+        assert len(sim_starts) == n_sims, (
+            f"Expected {n_sims} simulations but found {len(sim_starts)} in file."
+        )
 
         for i, start_idx in enumerate(sim_starts):
             # each sample starts with //, followed by 2 lines of metadata, then the haplotype matrix
@@ -336,13 +343,21 @@ def ms_to_dataset(filepath: str, tokenizer: Tokenizer, label=None, label_dtype=N
                     haps = np.array([int(x) for x in line.strip()])
                     matrix.append(haps)
 
-            # use tokenizer to convert to input_ids and distances
-            matrix = np.array(matrix) # n_haps, n_snps
-            dist_vec = np.array([0] + [positions[j + 1] - positions[j] for j in range(len(positions) - 1)]) * length
-            dist_vec = dist_vec.astype(np.int32)
-            dist_vec = dist_vec[None, :].repeat(matrix.shape[0], axis=0)
+            matrix = np.array(matrix, dtype=np.int32)
+            distances = (
+                np.array(
+                    [0]
+                    + [
+                        positions[j + 1] - positions[j]
+                        for j in range(len(positions) - 1)
+                    ]
+                )
+                * length
+            ).astype(np.int32)
+            dist = distances[None, :].repeat(matrix.shape[0], axis=0)
+            region = np.dstack([matrix, dist])
 
-            region = np.dstack([matrix, dist_vec])
+            # use tokenizer to convert to input_ids and distances
             region, distances = tokenizer(region)
 
             out = {
@@ -357,9 +372,15 @@ def ms_to_dataset(filepath: str, tokenizer: Tokenizer, label=None, label_dtype=N
 
             yield out
 
-    features = make_features(tokenizer, label_dtype=label_dtype, label_resolution="window", extra_features=extra_vars_dtypes)
+    features = make_features(
+        tokenizer,
+        label_dtype=label_dtype,
+        label_resolution="window",
+        extra_features=extra_vars_dtypes,
+    )
 
     return Dataset.from_generator(gen, features=features)
+
 
 def parse_files_imputation(
     ref_file: str, tgt_file: str, tokenizer: Tokenizer, bed_file=None
@@ -463,7 +484,9 @@ def parse_file(filepath, args) -> Dataset:
     if ext == ".vcf" or ext == ".gz":
         # convert to h5
         newfile = filepath.replace(".gz", "").replace(".vcf", ".h5")
-        allel.vcf_to_hdf5(filepath, newfile, fields=["CHROM", "GT", "POS"], overwrite=True)
+        allel.vcf_to_hdf5(
+            filepath, newfile, fields=["CHROM", "GT", "POS"], overwrite=True
+        )
         ext = ".h5"
         filepath = newfile
 

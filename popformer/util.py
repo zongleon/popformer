@@ -60,7 +60,7 @@ def process_gt_dist(
 
     if ret_major_minor:
         return region, flipped  # n X SNPs X 2
-    
+
     return region  # n X SNPs X 2
 
 
@@ -69,7 +69,9 @@ def major_minor(matrix):
     n = matrix.shape[0]
     flipped = np.zeros(matrix.shape[1], dtype=bool)
     for j in range(matrix.shape[1]):
-        if np.count_nonzero(matrix[:, j] == 1) > np.count_nonzero(matrix[:, j] == 0):  # count the 1's
+        if np.count_nonzero(matrix[:, j] == 1) > np.count_nonzero(
+            matrix[:, j] == 0
+        ):  # count the 1's
             # then we should flip 0s and 1s
             # accounting for the fact that there may be missing data (e.g., 2)
             matrix[:, j][matrix[:, j] <= 1] = 1 - matrix[:, j][matrix[:, j] <= 1]

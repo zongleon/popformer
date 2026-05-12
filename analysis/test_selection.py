@@ -9,24 +9,24 @@ import matplotlib.pyplot as plt
 import numpy as np
 import theme
 from evaluation.evaluators import genome_classification, random_classification
+from evaluation.models.popformer import PopformerModel
+from evaluation.models.popformer_lp import PopformerLPModel
 from selection_config import (
-    make_nn_models,
-    make_summary_stat_models,
     run_all,
     sort_models,
 )
-from sklearn.metrics import average_precision_score
 
 SIMULATED_DATASETS = [
     # "data/dataset/discoal_CEU",
     # "data/dataset/discoal_CHB",
     # "data/dataset/discoal_YRI",
-    "data/dataset/discoal_consts_1000",
-    "data/dataset/discoal_consts_5000",
-    "data/dataset/discoal_consts_10000",
-    "data/dataset/discoal_consts_50000",
-    "data/dataset/discoal_consts_100000",
+    # "data/dataset/discoal_consts_1000",
+    # "data/dataset/discoal_consts_5000",
+    # "data/dataset/discoal_consts_10000",
+    # "data/dataset/discoal_consts_50000",
+    # "data/dataset/discoal_consts_100000",
     "data/dataset/discoal_bottlenecks_100",
+    "data/dataset/discoal_bottlenecks_500",
     "data/dataset/discoal_bottlenecks_1000",
     "data/dataset/discoal_bottlenecks_2500",
     "data/dataset/discoal_bottlenecks_5000",
@@ -48,7 +48,9 @@ def build_evaluators(dataset_paths):
     return evaluators
 
 
-def plot_classification_curves(results, models, datasets, roc_only=False, final_suffix=""):
+def plot_classification_curves(
+    results, models, datasets, roc_only=False, final_suffix=""
+):
     """ROC, PR, and score-distribution plots for every dataset with labels."""
     for ds in datasets:
         trues = [results[(m, ds)].get("trues") for m in models]
@@ -185,21 +187,6 @@ def plot_roc_by_s_f(results, models, dataset_name="pan_test"):
     plt.close()
 
 
-def get_easiest_aucs(results, model, dataset_name="pan_test"):
-    """Get the AUCs for the easiest (highest-s) examples."""
-    res = results.get((model, dataset_name), {})
-    y_trues, s_vals, f_vals = np.array(res["trues"]), np.array(res["s"]), np.array(res["f"])
-
-    # get highest s, highest f
-    mask = ((s_vals == np.max(s_vals)) & (f_vals == np.max(f_vals))) | (y_trues == 0)
-
-    auprc = average_precision_score(
-        y_trues[mask],
-        results[(model, dataset_name)]["preds_for_metrics"][mask],
-    )
-    return auprc
-
-
 def plot_acc_vs_train_size(df, dataset_name="pan2CEU"):
     df_acc = df[df["dataset"] == dataset_name].copy()
     df_acc["train_size"] = df_acc["model"].apply(
@@ -219,19 +206,29 @@ def plot_acc_vs_train_size(df, dataset_name="pan2CEU"):
     )
 
 
-def plot_acc_by_x(df, x: str, trained_on_line=None, x_labels=None, flip_x=False, log_x=False, metric="easy_auc"):
+def plot_acc_by_x(
+    df,
+    x: str,
+    trained_on_line=None,
+    x_labels=None,
+    flip_x=False,
+    log_x=False,
+    metric="easy_auc",
+):
     df_acc = df[["model", "dataset", x, metric]].copy()
     df_acc = df_acc[~df_acc[x].isna()]
     df_acc = df_acc.query("model not in ['sfs_1', 'sfs_1_count', 'sfs_2', 'n_snps']")
     fig, ax = plt.subplots(figsize=(8, 6))
     if trained_on_line is not None:
-        ax.axvline(trained_on_line, color="black", linestyle="--", linewidth=2, label="Training")
+        ax.axvline(
+            trained_on_line,
+            color="black",
+            linestyle="--",
+            linewidth=2,
+            label="Training",
+        )
     random_classification.plot_y_by_x(
-        df_acc,
-        y=metric,
-        x=x,
-        save_path=f"figs/{metric}_vs_{x}.png",
-        ax=ax
+        df_acc, y=metric, x=x, save_path=f"figs/{metric}_vs_{x}.png", ax=ax
     )
     if x_labels is not None:
         ax.set_xticks(df_acc[x].unique())
@@ -274,47 +271,44 @@ def plot_popf_vs_summary_stats(results, models, dataset_name="pan_test"):
 
 
 if __name__ == "__main__":
-    all_models = (
-        make_nn_models(
-            train_ds="discoal_consts_10000",
-            # test_sizes=[0.05, 0.5, 0.95, 0.99],
-            test_sizes=[0.05],
-            suffix="discoal_consts_10000",
-        )
-        + make_summary_stat_models()
-    )
+    all_models = [
+        PopformerLPModel(
+            model_path="models/popf-base-btl-1000-high",
+            lp_path="models/lp/popf-base-btl-1000-high_discoal_consts_10000-0.05_lp.pkl",
+            model_name="popformer-lp",
+            subsample=(64, 64),
+            subsample_type="random",
+        ),
+        PopformerModel(
+            model_path="models/selbin-init-discoal_consts_10000-0.05",
+            model_name="popformer-no-pretrain",
+            subsample=(64, 64),
+            subsample_type="random",
+        ),
+        PopformerModel(
+            model_path="models/selbin-base-btl-1000-high-discoal_consts_10000-0.05",
+            model_name="popformer-ft",
+            subsample=(64, 64),
+            subsample_type="random",
+        ),
+    ]
+
     evaluators = build_evaluators(SIMULATED_DATASETS)
 
     results, df = run_all(all_models, evaluators, force=False)
     models = sort_models(df["model"].unique().tolist())
     datasets = df["dataset"].unique().tolist()
-    df["auprc_strong"] = df.apply(lambda row: get_easiest_aucs(results, row["model"], dataset_name=row["dataset"]), axis=1)
 
     # Print summary tables
     if "accuracy" in df.columns:
         cols = ["model", "dataset", "accuracy", "precision", "recall", "auroc", "auprc"]
         print(df[cols].dropna().to_string())
 
+    df = df[~df["model"].str.contains("BOS")]
+
     # All plots
     popf_models = [m for m in models if m.startswith("popformer") and "0.05" in m]
     all_models = [m for m in models if "0.05" in m] + ["tajimas_d"]
-
-    for model_list, suffix in [
-        (all_models, "all_models"),
-        # (popf_models, "popformer_models"),
-    ]:
-        plot_classification_curves(results, model_list, datasets, roc_only=True, final_suffix=suffix)
-
-    discoal_datasets = [ds for ds in datasets if ds.startswith("discoal")]
-    # # for dataset_name in ["discoal_CEU", "discoal_CHB", "discoal_YRI"]:
-    for dataset_name in discoal_datasets:
-        # plot_acc_vs_train_size(df, dataset_name=dataset_name)
-        # plot_roc_by_s(results, all_models, dataset_name=dataset_name)
-        plot_roc_by_s_f(results, all_models, dataset_name=dataset_name)
-    # plot_popf_vs_summary_stats(results, models, dataset_name="discoal_consts_10000")
-
-
-    df["N"] = df["dataset"].apply(lambda x: int(x.split("_")[-1]) if "discoal_consts" in x else np.nan)
 
     def label_bottleneck(x):
         if "discoal_bottlenecks" in x:
@@ -324,11 +318,21 @@ if __name__ == "__main__":
             val = round(val)
             return f"{val:d}%"
         return np.nan
+
     btl_labels = df["dataset"].apply(label_bottleneck)
     btl_labels = btl_labels[~btl_labels.isna()].unique().tolist()
-    df["bottleneck"] = df["dataset"].apply(lambda x: int(x.split("_")[-1]) if "discoal_bottlenecks" in x else np.nan)
+    df["bottleneck"] = df["dataset"].apply(
+        lambda x: int(x.split("_")[-1]) if "discoal_bottlenecks" in x else np.nan
+    )
 
     # for metric in ["auprc", "auprc_strong"]:
-    for metric in ["auprc", "balanced_accuracy"]:
-        plot_acc_by_x(df, "bottleneck", trained_on_line=10000, x_labels=btl_labels, flip_x=True, metric=metric)
-        plot_acc_by_x(df, "N", trained_on_line=10000, metric=metric, log_x=True)
+    plot_acc_by_x(
+        df,
+        "bottleneck",
+        trained_on_line=10000,
+        x_labels=btl_labels,
+        flip_x=True,
+        log_x=True,
+        metric="auprc",
+    )
+    # plot_acc_by_x(df, "N", trained_on_line=10000, metric=metric, log_x=True)

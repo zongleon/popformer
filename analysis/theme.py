@@ -1,3 +1,5 @@
+from itertools import cycle
+
 import matplotlib.pyplot as plt
 
 # style = "seaborn-v0_8-poster"
@@ -29,9 +31,17 @@ model_color_map = {
     "FASTER-NN": colors[3],
     "resnet34": colors[4],
     "tajimas_d": colors[8],
-    "IMPUTE 5": colors[3],
+    "IMPUTE5": colors[3],
     "Nearest Neighbor": colors[4],
+    "Column Frequency": colors[5],
 }
+
+
+# assign by default tab10 colors to models not in the above map
+def get_color(model):
+    return model_color_map.setdefault(model, cycle(colors))
+
+
 dataset_rename_map = {
     "pan2CEU_test": "CEU",
     "pan2CHB_test": "CHB",
@@ -59,7 +69,7 @@ def model_to_color(model: str):
     if get_model_base_name(model) in model_color_map:
         return model_color_map[get_model_base_name(model)]
 
-    return "#000000"  # default to black
+    return cycle(colors)
 
 
 pop_to_color = {

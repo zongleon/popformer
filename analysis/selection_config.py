@@ -5,9 +5,9 @@ import pandas as pd
 import theme
 from evaluation.core import BaseEvaluator
 from evaluation.models import (
+    fasternn,
     popformer,
     popformer_lp,
-    fasternn,
     schrider_resnet,
     summary_stat,
 )
@@ -25,6 +25,18 @@ MODEL_ORDER = [
     "sfs_1_count",
     "sfs_2",
     "n_snps",
+    "init (LP)",
+    "base (LP)",
+    "with span masking (LP)",
+    "high mask rate (LP)",
+    "init, (FT)",
+    "base, (FT)",
+    "with span masking, (FT)",
+    "high mask rate, (FT)",
+    "init, BOS (LP)",
+    "base, BOS (LP)",
+    "with span masking, BOS (LP)",
+    "high mask rate, BOS (LP)",
 ]
 
 INVERT_SCORE_MODELS = ["tajimas_d"]
@@ -65,13 +77,13 @@ def make_nn_models(train_ds, test_sizes: list[float], suffix="") -> list:
     for ts in test_sizes:
         models += [
             popformer.PopformerModel(
-                f"models/selbin-pt-sm-{train_ds}-{ts}",
+                f"models/{train_ds}-{ts}",
                 f"popformer-{suffix}{ts}",
                 subsample=(64, 64),
                 subsample_type="diverse",
             ),
             popformer.PopformerModel(
-                f"models/selbin-ft-discoal-{train_ds}-{ts}", # TODO
+                f"models/selbin-ft-discoal-{train_ds}-{ts}",  # TODO
                 f"popformer-ftdlrr-{suffix}{ts}",
                 subsample=(64, 64),
                 subsample_type="random",
@@ -131,6 +143,10 @@ def run_all(
     df = pd.DataFrame.from_dict(results, orient="index")
     df.index = pd.MultiIndex.from_tuples(df.index, names=["model", "dataset"])
     df = df.reset_index().sort_values(by=["dataset", "model"])
+    # explode the metrics columns into separate rows
+    df = df.explode(
+        ["accuracy", "auroc", "auprc", "precision", "recall", "balanced_accuracy"]
+    )
     return results, df
 
 

@@ -1,15 +1,23 @@
+# python stuffs
 __pycache__
 *.egg-info
-
 build/
+
+# symlinks ignore
+data
+impute5
+
+# outputs ignore
 data/
-/models/
+models/
+features/
 preds/
 figs/
 figs_*/
 impute5/
 wandb/
 
+# and other outputs probably
 *.pt
 *.pth
 *.pdf
@@ -20,5 +28,4 @@ wandb/
 *.h5
 *.arrow
 *.json
-!**/configs/*.json
 *.npy

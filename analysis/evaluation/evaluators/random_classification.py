@@ -1,20 +1,22 @@
 import warnings
+
+import matplotlib.pyplot as plt
 import numpy as np
-from ..core import BaseHFEvaluator
+import seaborn as sns
+import theme
+from selection_config import MODEL_ORDER
 from sklearn.metrics import (
     PrecisionRecallDisplay,
     RocCurveDisplay,
     accuracy_score,
     average_precision_score,
+    balanced_accuracy_score,
     precision_score,
     recall_score,
     roc_auc_score,
-    balanced_accuracy_score
 )
-import matplotlib.pyplot as plt
-import seaborn as sns
-from selection_config import MODEL_ORDER
-import theme
+
+from ..core import BaseHFEvaluator
 
 
 class RandomClassificationEvaluator(BaseHFEvaluator):
@@ -35,6 +37,8 @@ class RandomClassificationEvaluator(BaseHFEvaluator):
         - Regioned predictions if positions are available
     """
 
+    N_BOOTSTRAP = 100
+
     def evaluate(self, predictions, **kwargs):
         results = {}
         pos_preds = predictions[:, 1]
@@ -47,12 +51,27 @@ class RandomClassificationEvaluator(BaseHFEvaluator):
             pos_preds_metrics = 1 - pos_preds_metrics
             binary_preds_metrics = 1 - binary_preds_metrics
 
-        acc = accuracy_score(labels, binary_preds_metrics)
-        aucroc = roc_auc_score(labels, pos_preds_metrics)
-        auprc = average_precision_score(labels, pos_preds_metrics)
-        precision = precision_score(labels, binary_preds_metrics)
-        recall = recall_score(labels, binary_preds_metrics)
-        balanced_acc = balanced_accuracy_score(labels, binary_preds_metrics)
+        accs = []
+        aucrocs = []
+        auprcs = []
+        precisions = []
+        recalls = []
+        balanced_accs = []
+        for _ in range(self.N_BOOTSTRAP):
+            indices = np.random.choice(len(labels), len(labels), replace=True)
+            boot_labels, boot_binary_preds, boot_pos_preds = (
+                labels[indices],
+                binary_preds_metrics[indices],
+                pos_preds_metrics[indices],
+            )
+            accs.append(accuracy_score(boot_labels, boot_binary_preds))
+            aucrocs.append(roc_auc_score(boot_labels, boot_pos_preds))
+            auprcs.append(average_precision_score(boot_labels, boot_pos_preds))
+            precisions.append(precision_score(boot_labels, boot_binary_preds))
+            recalls.append(recall_score(boot_labels, boot_binary_preds))
+            balanced_accs.append(
+                balanced_accuracy_score(boot_labels, boot_binary_preds)
+            )
 
         facet_vars = [
             k
@@ -76,15 +95,15 @@ class RandomClassificationEvaluator(BaseHFEvaluator):
         results.update(
             {
                 "model_name": self.model_name,
-                "accuracy": acc,
-                "auroc": aucroc,
-                "auprc": auprc,
-                "precision": precision,
-                "recall": recall,
+                "accuracy": accs,
+                "auroc": aucrocs,
+                "auprc": auprcs,
+                "precision": precisions,
+                "recall": recalls,
                 "preds": pos_preds,
                 "preds_for_metrics": pos_preds_metrics,
                 "trues": labels,
-                "balanced_accuracy": balanced_acc,
+                "balanced_accuracy": balanced_accs,
             }
         )
 
@@ -175,7 +194,7 @@ def plot_curves(
         ax.grid(True, axis="y", alpha=0.3, linestyle="--")
         if legend_fontsize is not None:
             ax.legend(fontsize=legend_fontsize)
-    
+
     if dataset is not None:
         ax.set_title(theme.dataset_rename_map.get(dataset, dataset))
 
@@ -191,7 +210,14 @@ def plot_curves(
         plt.close()
 
 
-def plot_y_by_x(df_acc, y="accuracy", x="s_bin", save_path="figs/lp_acc_vs_s.png", logx=False, ax=None):
+def plot_y_by_x(
+    df_acc,
+    y="accuracy",
+    x="s_bin",
+    save_path="figs/lp_acc_vs_s.png",
+    logx=False,
+    ax=None,
+):
     new = False
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 6))
@@ -205,8 +231,9 @@ def plot_y_by_x(df_acc, y="accuracy", x="s_bin", save_path="figs/lp_acc_vs_s.png
         hue_order=[m for m in MODEL_ORDER if m in df_acc["model"].unique()],
         style="model",
         style_order=[m for m in MODEL_ORDER if m in df_acc["model"].unique()],
+        err_style="bars",
         errorbar="sd",
-        palette=theme.model_color_map,
+        palette=theme.colors,
         markers=True,
         ax=ax,
     )
@@ -218,4 +245,3 @@ def plot_y_by_x(df_acc, y="accuracy", x="s_bin", save_path="figs/lp_acc_vs_s.png
     if new:
         plt.savefig(save_path, dpi=300, bbox_inches="tight")
         plt.close()
-

@@ -1,21 +1,12 @@
 import os
+import pickle
+import sys
 
 import datasets
 import numpy as np
-import pandas as pd
-import pickle
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import average_precision_score, accuracy_score
+from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
-from sklearn.utils import shuffle
-import sys
-
-models = [sys.argv[1]]
-train_data = [sys.argv[2]]
-
-test_size = 0.05
-if len(sys.argv) > 3:
-    test_size = float(sys.argv[3])
 
 
 def load_features(path: str) -> np.ndarray:
@@ -55,47 +46,52 @@ def grid_search_C(
     return float(best_C)
 
 
-def experiment():
-    for model in models:
-        for train_set in train_data:
-            print(f"\n=== Model: {model}, Train set: {train_set} ===")
-            train_features = load_features(f"data/features/{train_set}_{model}.npz")
-            train_labels = load_labels(
-                f"data/dataset/{train_set}/", label_column="label"
-            )
+def experiment(features, train_set, test_size):
+    print(f"\n=== Model: {model}, Train set: {train_set} ===")
+    train_features = load_features(features)
+    train_labels = load_labels(train_set, label_column="label")
 
-            # split training dataset
-            X_tr, X_test, y_tr, y_test = train_test_split(
-                train_features,
-                train_labels,
-                random_state=0,
-                test_size=test_size,
-                stratify=train_labels,
-            )
-            X_train, X_ev, y_train, y_ev = train_test_split(
-                X_tr,
-                y_tr,
-                random_state=0,
-                test_size=0.2,
-                stratify=y_tr,
-            )
+    # split training dataset
+    X_tr, X_test, y_tr, y_test = train_test_split(
+        train_features,
+        train_labels,
+        random_state=0,
+        test_size=test_size,
+        stratify=train_labels,
+    )
+    X_train, X_ev, y_train, y_ev = train_test_split(
+        X_tr,
+        y_tr,
+        random_state=0,
+        test_size=0.2,
+        stratify=y_tr,
+    )
 
-            # best_C = grid_search_C(X_train, y_train, X_ev, y_ev)
-            best_C = 1
+    # best_C = grid_search_C(X_train, y_train, X_ev, y_ev)
+    best_C = 1
 
-            classifier = LogisticRegression(random_state=0, C=best_C, max_iter=1000)
-            classifier.fit(X_tr, y_tr)
+    classifier = LogisticRegression(random_state=0, C=best_C, max_iter=1000)
+    classifier.fit(X_tr, y_tr)
 
-            test_pred = classifier.predict_proba(X_test)[:, 1]
-            test_acc = (y_test == (test_pred >= 0.5)).mean()
-            print(f"Test set accuracy: {test_acc:.4f}")
+    test_pred = classifier.predict_proba(X_test)[:, 1]
+    test_acc = (y_test == (test_pred >= 0.5)).mean()
+    print(f"Test set accuracy: {test_acc:.4f}")
 
-            os.makedirs("models/lp", exist_ok=True)
-            with open(f"models/lp/{train_set}_{model}-{test_size}_lp.pkl", "wb") as f:
-                pickle.dump(classifier, f)
+    model_name = os.path.basename(features).split(".")[0]
+    dataset_name = os.path.basename(train_set).split(".")[0]
+    os.makedirs("models/lp", exist_ok=True)
+    with open(f"models/lp/{model_name}-{test_size}_lp.pkl", "wb") as f:
+        pickle.dump(classifier, f)
 
     return 0
 
 
 if __name__ == "__main__":
-    experiment()
+    model = sys.argv[1]
+    train_data = sys.argv[2]
+
+    test_size = 0.05
+    if len(sys.argv) > 3:
+        test_size = float(sys.argv[3])
+
+    experiment(model, train_data, test_size)

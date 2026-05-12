@@ -3,12 +3,18 @@ Main pre-training script for popformer. Mostly trained on PARCC
 with scripts/cluster/pretrain.sh on SLURM.
 """
 
-from transformers import RobertaConfig
-from transformers import Trainer, TrainingArguments
-from popformer.models import PopformerForMaskedLM
-from datasets import load_from_disk
-from popformer.collators import HaploSimpleDataCollator
 import argparse
+
+from datasets import load_from_disk
+from transformers import (
+    EarlyStoppingCallback,
+    RobertaConfig,
+    Trainer,
+    TrainingArguments,
+)
+
+from popformer.collators import HaploSimpleDataCollator
+from popformer.models import PopformerForMaskedLM
 
 parser = argparse.ArgumentParser(description="Train PopformerForMaskedLM model")
 parser.add_argument(
@@ -32,7 +38,9 @@ parser.add_argument(
 parser.add_argument(
     "--batch-size", type=int, default=8, help="Batch size for training and evaluation"
 )
-parser.add_argument("--test-size", type=float, default=0.05, help="Evaluation split size")
+parser.add_argument(
+    "--test-size", type=float, default=0.05, help="Evaluation split size"
+)
 parser.add_argument(
     "--output-path",
     type=str,
@@ -124,6 +132,7 @@ trainer = Trainer(
     train_dataset=train_dataset,
     eval_dataset=eval_dataset,
     data_collator=data_collator,
+    callbacks=[EarlyStoppingCallback(early_stopping_patience=10)],
 )
 
 # train the model

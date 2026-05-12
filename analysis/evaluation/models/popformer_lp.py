@@ -1,9 +1,12 @@
-from ..core import BaseModel
-import torch
-from popformer.models import PopformerForMaskedLM
-from popformer.collators import HaploSimpleDataCollator
 import pickle
+
+import torch
 from sklearn.linear_model import LogisticRegression
+
+from popformer.collators import HaploSimpleDataCollator
+from popformer.models import PopformerForMaskedLM
+
+from ..core import BaseModel
 
 
 class PopformerLPModel(BaseModel):
@@ -17,6 +20,7 @@ class PopformerLPModel(BaseModel):
         device: torch.device | None = None,
         subsample=None,
         subsample_type="diverse",
+        pooling_type="mean",
     ):
         self.model = PopformerForMaskedLM.from_pretrained(
             model_path, torch_dtype=torch.float16
@@ -39,6 +43,8 @@ class PopformerLPModel(BaseModel):
             subsample=subsample, subsample_type=subsample_type
         )
 
+        self.pooling_type = pooling_type
+
     def preprocess(self, batch):
         # collator
         batch = self.collator(batch)
@@ -58,7 +64,10 @@ class PopformerLPModel(BaseModel):
             return_hidden_states=True,
         )
 
-        features = output["hidden_states"].mean(dim=(1, 2)).detach().cpu()
+        if self.pooling_type == "mean":
+            features = output["hidden_states"].mean(dim=(1, 2)).detach().cpu()
+        elif self.pooling_type == "bos":
+            features = output["hidden_states"][:, :, 0, :].mean(dim=1).detach().cpu()
 
         return self.lp_model.predict_proba(features)
         # pos_logits = self.lp_model.decision_function(features)

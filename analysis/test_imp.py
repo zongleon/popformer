@@ -21,6 +21,7 @@ from popformer.models import PopformerForMaskedLM
 
 MAF_BINS = np.linspace(0, 0.5, 11)
 
+
 def test_masked_lm(model_path, dataset):
     print("=" * 30)
     print("Test: Masked performance")
@@ -59,8 +60,6 @@ def test_masked_lm(model_path, dataset):
     fig, (ax0, ax1, ax2) = plt.subplots(3, 1, sharex=True, sharey=True, figsize=(6, 20))
 
     def color(img):
-        # img = img[:50]
-        # Create a color image: 0->white, 1->black, 4->red
         color_img = np.stack([img, img, img], axis=-1).astype(float)
         # Set all to white
         color_img[:] = 1.0
@@ -84,7 +83,9 @@ def test_masked_lm(model_path, dataset):
     ax1.set_title("predicted")
 
     roundtrip_img = counts.copy()
-    ax2.imshow(color(roundtrip_img[0]), aspect="auto", cmap="Greys", interpolation="none")
+    ax2.imshow(
+        color(roundtrip_img[0]), aspect="auto", cmap="Greys", interpolation="none"
+    )
     ax2.set_title("round-trip")
 
     # # Show ground truth: input_ids with masked id 4 replaced by labels
@@ -106,8 +107,6 @@ def test(model, dataset):
 
     collator = HaploSimpleDataCollator(subsample=None)
 
-    # np savetxt on dataset[0]["input_ids"]
-    # np.savetxt("test_input_ids.txt", dataset[0]["input_ids"], fmt="%d")
     loader = DataLoader(
         dataset,
         batch_size=4,
@@ -125,14 +124,12 @@ def test(model, dataset):
             output = model(
                 batch["input_ids"], batch["distances"], batch["attention_mask"]
             )
-            # only store output logits for masked positions
-            # logits = output["logits"]
-            # mask = batch["input_ids"] == 4  # assuming 4 is the mask token id
-            # preds.append(logits[mask].detach().cpu())
             preds.append(output["logits"].detach().cpu())
 
     # Concatenate all logits, move to CPU, convert to numpy
-    preds = torch.cat(preds, dim=0).numpy()
+    # softmax too
+    preds = torch.cat(preds, dim=0)
+    preds = torch.softmax(preds, dim=-1).numpy()
 
     return preds
 
@@ -266,25 +263,31 @@ def compute_metrics(preds, dataset, labels_path):
     data = np.array(dataset["input_ids"])
     data = data.transpose(1, 0, 2)
     data = data[:, :, 1:-1]
+    preds = preds[:, :, 1:-1, :]
     data = data.reshape(data.shape[0], -1)
 
     mask = (data == 4).any(axis=0)
 
+    rt_labels = data[:64, :]
+    rt_preds = preds.transpose(1, 0, 2, 3)[:64]
+    rt_preds = rt_preds.reshape(rt_preds.shape[0], -1, rt_preds.shape[-1])
+    rt_preds = rt_preds.argmax(axis=-1)
+    # rt_preds = rt_preds[:, :, 1]
+    # have to calculate maf for rt_labels
+    rt_maf = rt_labels.mean(axis=0)
+
     positions = positions[mask]
     flippeds = flippeds[mask]
-    # np.savetxt("testpos.out", positions, "%d")
-    # np.savetxt("testpos2.out", labels["pos"], "%d")
 
     # Find indices in labels["pos"] that are not in positions
     mask_labels = ~labels["pos"].isin(positions)
     labels = labels[~mask_labels].reset_index(drop=True)
 
-    preds = preds[:, :, 1:-1, :]
-    pred_labels = torch.softmax(torch.tensor(preds), dim=-1).numpy()
-    pred_labels = pred_labels.transpose(1, 0, 2, 3)  # shape: (haps, batch, snps, 6)
+    pred_labels = preds.transpose(1, 0, 2, 3)  # shape: (haps, batch, snps, 6)
     pred_labels = pred_labels.reshape(
         pred_labels.shape[0], -1, pred_labels.shape[-1]
     )  # shape: (haps, batch*snps, 6)
+
     pred_labels = pred_labels[-len(labels["genotypes"].iloc[0]) :, mask]
 
     # preprocess true labels
@@ -292,33 +295,26 @@ def compute_metrics(preds, dataset, labels_path):
     true = np.array(true).T
 
     # Convert true and pred_labels (shape: n_haps, n_snps) to genotypes
-    # Each consecutive pair of haps is summed to produce one genotype (0, 1, or 2)
+    # def haps_to_genotypes(haps):
+    #     # haps: (n_haps, n_snps)
+    #     # group every two haps and sum along axis 0
+    #     return haps.reshape(-1, 2, haps.shape[1]).sum(axis=1)
 
-    def haps_to_genotypes(haps):
-        # haps: (n_haps, n_snps)
-        # group every two haps and sum along axis 0
-        return haps.reshape(-1, 2, haps.shape[1]).sum(axis=1)
-
-    # Convert true haplotypes to genotypes
-    true_genotypes = haps_to_genotypes(true)
     # Convert predicted haplotypes to genotypes
     pred_haps = pred_labels[:, :, :2].argmax(axis=-1)  # shape: (n_haps, n_snps)
+    pred_hap_probs = pred_labels[:, :, 1]
 
     # flip predicted haplotypes where major allele was flipped
     for snp_idx in range(pred_haps.shape[1]):
         if flippeds[snp_idx]:
             pred_haps[:, snp_idx] = 1 - pred_haps[:, snp_idx]
+            pred_hap_probs[:, snp_idx] = 1 - pred_hap_probs[:, snp_idx]
 
-    pred_genotypes = haps_to_genotypes(pred_haps)
-
-    true_flat = true_genotypes.flatten()
-    pred_flat = pred_genotypes.flatten()
-
-    r, _ = pearsonr(true_flat, pred_flat)
+    r, _ = pearsonr(true.flatten(), pred_hap_probs.flatten())
     r2 = r**2
 
     # Compute error rate (fraction of mismatches)
-    error_rate = (true_genotypes != pred_genotypes).mean()
+    error_rate = (true != pred_haps).mean()
 
     # Binned by MAF
     binned_results = []
@@ -326,23 +322,34 @@ def compute_metrics(preds, dataset, labels_path):
         bin_mask = (labels["MAF"] >= MAF_BINS[i]) & (labels["MAF"] < MAF_BINS[i + 1])
         if bin_mask.sum() == 0:
             continue
-        true_bin = true_genotypes[:, bin_mask]
-        pred_bin = pred_genotypes[:, bin_mask]
-        true_flat_bin = true_bin.flatten()
-        pred_flat_bin = pred_bin.flatten()
-        if len(true_flat_bin) == 0:
+        true_bin = true[:, bin_mask]
+        pred_bin = pred_haps[:, bin_mask]
+        probs_bin = pred_hap_probs[:, bin_mask]
+        if len(true_bin) == 0:
             continue
-        r_bin, _ = pearsonr(true_flat_bin, pred_flat_bin)
+        r_bin, _ = pearsonr(true_bin.flatten(), probs_bin.flatten())
         r2_bin = r_bin**2
-        error_rate_bin = (true_bin != pred_bin).mean()
-        binned_results.append((MAF_BINS[i], r_bin, r2_bin, error_rate_bin))
 
-    return r, r2, error_rate, binned_results
+        error_rate_bin = (true_bin != pred_bin).mean()
+
+        # TODO roundtrip accuracy
+        rt_maf_mask = (rt_maf > MAF_BINS[i]) & (rt_maf < MAF_BINS[i + 1])
+        roundtrip_accuracy_bin = (
+            rt_labels[:, rt_maf_mask] == rt_preds[:, rt_maf_mask]
+        ).mean()
+
+        binned_results.append(
+            (MAF_BINS[i], r_bin, r2_bin, error_rate_bin, roundtrip_accuracy_bin)
+        )
+
+    results = (r, r2, error_rate)
+
+    return results, binned_results
 
 
 def test_impute(vcf_path, labels_path):
     vcf = VCF(vcf_path)
-    imputeds = []
+    imputeds, probs = [], []
     for record in vcf:
         try:
             # was imputed
@@ -354,6 +361,9 @@ def test_impute(vcf_path, labels_path):
         gts = "".join([str(gt[0]) + str(gt[1]) for gt in gts])
         imputeds.append(gts)
 
+        prob = record.format("AP").flatten()
+        probs.append(prob)
+
     labels = pd.read_csv(
         labels_path, dtype={"pos": int, "MAF": float, "genotypes": str}
     )
@@ -361,15 +371,13 @@ def test_impute(vcf_path, labels_path):
     true = np.array(true).T
     imps = pd.Series(imputeds).apply(lambda x: [int(c) for c in x]).tolist()
     imps = np.array(imps).T
+    probs = np.array(probs).T
 
-    true_flat = true.flatten()
-    imps_flat = imps.flatten()
-
-    r, _ = pearsonr(true_flat, imps_flat)
+    r, _ = pearsonr(true.flatten(), probs.flatten())
     r2 = r**2
 
     # Compute error rate (fraction of mismatches)
-    error_rate = (true_flat != imps_flat).mean()
+    error_rate = (true != imps).mean()
 
     # Binned by MAF
     binned_results = []
@@ -379,30 +387,27 @@ def test_impute(vcf_path, labels_path):
             continue
         true_bin = true[:, bin_mask]
         imps_bin = imps[:, bin_mask]
-        true_flat_bin = true_bin.flatten()
-        imps_flat_bin = imps_bin.flatten()
-        if len(true_flat_bin) == 0:
+        probs_bin = probs[:, bin_mask]
+        if len(true_bin) == 0:
             continue
-        r_bin, _ = pearsonr(true_flat_bin, imps_flat_bin)
+        r_bin, _ = pearsonr(true_bin.flatten(), probs_bin.flatten())
         r2_bin = r_bin**2
-        error_rate_bin = (true_flat_bin != imps_flat_bin).mean()
-        binned_results.append((MAF_BINS[i], r_bin, r2_bin, error_rate_bin))
+        error_rate_bin = (true_bin != imps_bin).mean()
+        binned_results.append((MAF_BINS[i], r_bin, r2_bin, error_rate_bin, None))
 
-    return r, r2, error_rate, binned_results
+    results = (r, r2, error_rate)
+
+    return results, binned_results
 
 
-def run(seeds, mask_ratios, models):
+def run(seeds, mask_ratios):
     # Store results: {mask_ratio: {method: [(r, r2, err, time), ...]}}
-    results = {
-        mr: {
-            "popformer-base": [],
-            "impute5": [],
-            "baseline1": [],
-            "baseline2": [],
-        }
-        for mr in mask_ratios
-    }
+    plot_data = []
     maf_plot_data = []
+    tokenizer = Tokenizer(max_haps=256, num_snps=512, major_minor_flip=False)
+
+    # Run predictions
+    model = "models/popf-small"
 
     for mr in mask_ratios:
         for seed in seeds:
@@ -411,14 +416,7 @@ def run(seeds, mask_ratios, models):
             ref_vcf = f"data/imputation/masked/KHV_{mr}_{seed}_ref.h5"
             tgt_vcf = f"data/imputation/masked/KHV_{mr}_{seed}_tgt.h5"
             labels_path = f"data/imputation/masked/KHV_{mr}_{seed}_snps.csv"
-            tokenizer = Tokenizer(max_haps=256, num_snps=512, major_minor_flip=False)
             dataset = parse_files_imputation(ref_vcf, tgt_vcf, tokenizer)
-
-            # Run predictions
-            model = "models/popf-small"
-
-            if seed == seeds[0]:
-                test_masked_lm(model, dataset)
 
             start = time.time()
             model_preds = test(model, dataset)
@@ -454,6 +452,7 @@ def run(seeds, mask_ratios, models):
                     "20:30000-63000000",
                     "--buffer-region",
                     "20:0-63500000",
+                    "--out-ap-field",
                     "--o",
                     out_vcf,
                 ],
@@ -463,112 +462,64 @@ def run(seeds, mask_ratios, models):
             impute_time = time.time() - start
 
             # Compute metrics
-            model_r, model_r2, model_err, model_binned = compute_metrics(
-                model_preds, dataset, labels_path
-            )
-            # model_r_large, model_r2_large, model_err_large, _ = compute_metrics(
-            #     model_preds_large, dataset, labels_path
-            # )
-            baseline1_r, baseline1_r2, baseline1_err, baseline1_binned = compute_metrics(
+            results, model_binned = compute_metrics(model_preds, dataset, labels_path)
+            baseline1_results, baseline1_binned = compute_metrics(
                 baseline1_preds, dataset, labels_path
             )
-            baseline2_r, baseline2_r2, baseline2_err, baseline2_binned = compute_metrics(
+            baseline2_results, baseline2_binned = compute_metrics(
                 baseline2_preds, dataset, labels_path
             )
-            impute_r, impute_r2, impute_err, impute_binned = test_impute(
-                out_vcf, labels_path
-            )
+            impute_results, impute_binned = test_impute(out_vcf, labels_path)
 
-            for maf_bin, r_bin, r2_bin, err_bin in model_binned:
-                maf_plot_data.append(
+            for res, bin_res, t, method in zip(
+                [results, impute_results, baseline1_results, baseline2_results],
+                [model_binned, impute_binned, baseline1_binned, baseline2_binned],
+                [model_time, impute_time, baseline1_time, baseline2_time],
+                [
+                    "popformer",
+                    "impute5",
+                    "column freq baseline",
+                    "nearest neighbor baseline",
+                ],
+            ):
+                r, r2, err = res
+                plot_data.append(
                     {
-                        "Method": "popformer-base",
+                        "Method": method,
                         "Mask Ratio": int(mr),
                         "Seed": int(seed),
-                        "MAF Bin": maf_bin,
-                        "r": r_bin,
-                        "r2": r2_bin,
-                        "Error Rate": err_bin,
+                        "r": r,
+                        "r2": r2,
+                        "Error Rate": err,
+                        "Time": t,
                     }
                 )
 
-            for maf_bin, r_bin, r2_bin, err_bin in impute_binned:
-                maf_plot_data.append(
-                    {
-                        "Method": "impute5",
-                        "Mask Ratio": int(mr),
-                        "Seed": int(seed),
-                        "MAF Bin": maf_bin,
-                        "r": r_bin,
-                        "r2": r2_bin,
-                        "Error Rate": err_bin,
-                    }
-                )
+                for bin in bin_res:
+                    maf_bin, r_bin, r2_bin, err_bin, rt_bin = bin
+                    maf_plot_data.append(
+                        {
+                            "Method": method,
+                            "Mask Ratio": int(mr),
+                            "Seed": int(seed),
+                            "MAF Bin": maf_bin,
+                            "r": r_bin,
+                            "r2": r2_bin,
+                            "Error Rate": err_bin,
+                            "Roundtrip Accuracy": rt_bin,
+                        }
+                    )
 
-            for maf_bin, r_bin, r2_bin, err_bin in baseline1_binned:
-                maf_plot_data.append(
-                    {
-                        "Method": "column freq baseline",
-                        "Mask Ratio": int(mr),
-                        "Seed": int(seed),
-                        "MAF Bin": maf_bin,
-                        "r": r_bin,
-                        "r2": r2_bin,
-                        "Error Rate": err_bin,
-                    }
-                )
-
-            for maf_bin, r_bin, r2_bin, err_bin in baseline2_binned:
-                maf_plot_data.append(
-                    {
-                        "Method": "nearest neighbor baseline",
-                        "Mask Ratio": int(mr),
-                        "Seed": int(seed),
-                        "MAF Bin": maf_bin,
-                        "r": r_bin,
-                        "r2": r2_bin,
-                        "Error Rate": err_bin,
-                    }
-                )
-
-            # Store results
-            results[mr]["popformer-base"].append(
-                (model_r, model_r2, model_err, model_time)
-            )
-            # results["popformer-large"].append(
-            #     (model_r_large, model_r2_large, model_err_large, model_time_large)
-            # )
-            results[mr]["impute5"].append(
-                (impute_r, impute_r2, impute_err, impute_time)
-            )
-            results[mr]["baseline1"].append(
-                (baseline1_r, baseline1_r2, baseline1_err, baseline1_time)
-            )
-            results[mr]["baseline2"].append(
-                (baseline2_r, baseline2_r2, baseline2_err, baseline2_time)
-            )
-
-            # print intermediate results
-            # print(
-            #     f"Popformer: r={model_r:.4f}, r2={model_r2:.4f}, err={model_err:.4f}, time={model_time:.2f}s"
-            # )
-            # print(
-            #     f"Impute5:   r={impute_r:.4f}, r2={impute_r2:.4f}, err={impute_err:.4f}, time={impute_time:.2f}s"
-            # )
-            # print(
-            #     f"Baseline1: r={baseline1_r:.4f}, r2={baseline1_r2:.4f}, err={baseline1_err:.4f}, time={baseline1_time:.2f}s"
-            # )
-            # print(f"Baseline2: r={baseline2_r:.4f}, r2={baseline2_r2:.4f}, err={baseline2_err:.4f}, time={baseline2_time:.2f}s")
-    return results, maf_plot_data
+    return plot_data, maf_plot_data
 
 
 if __name__ == "__main__":
-    RUN = False
-    EXAMPLE = True
+    RUN = os.environ.get("RUN") is not None
+    EXAMPLE = os.environ.get("EXAMPLE") is not None
     os.makedirs("figs/imputation", exist_ok=True)
     # Define seeds and mask ratios to test
     seeds = [0, 1, 2]
-    mask_ratios = [20, 40, 60, 80]
+    mask_ratios = reversed([20, 40, 60, 80])
     maf_summary_path = Path("imputation_results_maf_summary.csv")
 
     if EXAMPLE:
@@ -581,29 +532,7 @@ if __name__ == "__main__":
         test_masked_lm(model, dataset)
 
     if RUN:
-        results, maf_plot_data = run(seeds, mask_ratios, models=None)
-
-        # Prepare data for plotting
-        plot_data = []
-        for mr in mask_ratios:
-            for method_name, method_key in [
-                ("popformer-base", "popformer-base"),
-                # ("popformer-large", "popformer-large"),
-                ("impute5", "impute5"),
-                ("column freq baseline", "baseline1"),
-                ("nearest neighbor baseline", "baseline2"),
-            ]:
-                for result in results[mr][method_key]:
-                    plot_data.append(
-                        {
-                            "Method": method_name,
-                            "Mask Ratio": int(mr),
-                            "r": result[0],
-                            "r2": result[1],
-                            "Error Rate": result[2],
-                            "Time (s)": result[3],
-                        }
-                    )
+        plot_data, maf_plot_data = run(seeds, mask_ratios)
 
         df_plot = pd.DataFrame(plot_data)
         df_plot.to_csv("imputation_results_summary.csv", index=False)
@@ -620,18 +549,18 @@ if __name__ == "__main__":
                 "Warning: imputation_results_maf_summary.csv not found, skipping MAF-binned plots."
             )
 
-    for metric in ["Error Rate", "r2"]:
-        df_plot_remove_col = df_plot[df_plot["Method"] != "column freq baseline"]
-        df_plot_remove_col["Method"] = df_plot_remove_col["Method"].replace(
+    for metric in ["Error Rate", "r2", "Time"]:
+        df_plot = df_plot[df_plot["Method"] != "column freq baseline"]
+        df_plot["Method"] = df_plot["Method"].replace(
             {
-                "impute5": "IMPUTE 5",
+                "impute5": "IMPUTE5",
                 "nearest neighbor baseline": "Nearest Neighbor",
-                "popformer-base": "popformer-base",
+                "column freq baseline": "Column Frequency",
             },
         )
         plt.figure(figsize=(8, 6))
         sns.pointplot(
-            data=df_plot_remove_col,
+            data=df_plot,
             x="Mask Ratio",
             y=metric,
             hue="Method",
@@ -640,51 +569,53 @@ if __name__ == "__main__":
         )
         if metric == "Error Rate":
             plt.ylim(0, 0.1)
-            sns.despine()
         if metric == "r2":
-            plt.ylim(0.75, 1)
-            sns.despine(top=False)
+            plt.ylim(0.5, 1)
         plt.tight_layout()
         plt.savefig(f"figs/imputation/{metric.replace(' ', '_').lower()}.png", dpi=300)
+        plt.close()
 
     if not df_maf_plot.empty:
-        df_maf_plot = df_maf_plot[df_maf_plot["Method"] != "column freq baseline"].copy()
+        df_maf_plot = df_maf_plot[
+            df_maf_plot["Method"] != "column freq baseline"
+        ].copy()
         df_maf_plot["Method"] = df_maf_plot["Method"].replace(
             {
-                "impute5": "IMPUTE 5",
+                "impute5": "IMPUTE5",
                 "nearest neighbor baseline": "Nearest Neighbor",
-                "popformer-base": "popformer-base",
+                "column freq baseline": "Column Frequency",
             },
         )
 
         df_maf_plot = df_maf_plot[df_maf_plot["Mask Ratio"] == 80].copy()
-        # df_maf_plot["MAF Bin"] = pd.Categorical(
-        #     df_maf_plot["MAF Bin"], categories=MAF_BINS[:-1], ordered=True
-        # )
-        # df_maf_plot = df_maf_plot.dropna(subset=["Errol"])
-        # print(df_maf_plot)
 
-        for metric in ["Error Rate", "r2"]:
+        for metric in ["Error Rate", "r2", "Roundtrip Accuracy"]:
+            plot_df = df_maf_plot.copy()
+            if metric == "Roundtrip Accuracy":
+                plot_df = df_maf_plot[df_maf_plot["Method"] == "popformer"]
             plt.figure(figsize=(8, 6))
-            sns.lineplot(
-                data=df_maf_plot,
+            sns.pointplot(
+                data=plot_df,
                 x="MAF Bin",
                 y=metric,
                 hue="Method",
+                # err_style="bars",
                 palette=theme.model_color_map,
-                # errorbar=("sd"),
+                errorbar="sd",
             )
             if metric == "Error Rate":
                 plt.ylim(0, 0.2)
-                sns.despine()
+            elif metric == "Roundtrip Accuracy":
+                pass
             else:
                 plt.ylim(0.0, 1)
-                sns.despine(top=False)
+
             plt.tight_layout()
             plt.savefig(
                 f"figs/imputation/{metric.replace(' ', '_').lower()}_vs_maf_mask80.png",
                 dpi=300,
             )
+            plt.close()
 
     # Print summary tables
     print(f"\n{'=' * 80}")
@@ -700,13 +631,7 @@ if __name__ == "__main__":
     for mr in mask_ratios:
         print(f"\nMask Ratio: {mr}%")
         mr_results = df_plot[df_plot["Mask Ratio"] == mr]
-        for method_name, method_key in [
-            ("popformer-base", "popformer-base"),
-            # ("popformer-large", "popformer-large"),
-            ("impute5", "impute5"),
-            ("column freq baseline", "baseline1"),
-            ("nearest neighbor baseline", "baseline2"),
-        ]:
+        for method_name in mr_results["Method"].unique():
             method_results = mr_results[mr_results["Method"] == method_name]
 
             aggregated = method_results.agg(
@@ -714,7 +639,7 @@ if __name__ == "__main__":
                     "r": ["mean", "std"],
                     "r2": ["mean", "std"],
                     "Error Rate": ["mean", "std"],
-                    "Time (s)": ["mean", "std"],
+                    "Time": ["mean", "std"],
                 }
             )
 
@@ -724,6 +649,6 @@ if __name__ == "__main__":
                     f"{aggregated['r']['mean']:.4f}±{aggregated['r']['std']:.4f}",
                     f"{aggregated['r2']['mean']:.4f}±{aggregated['r2']['std']:.4f}",
                     f"{aggregated['Error Rate']['mean']:.4f}±{aggregated['Error Rate']['std']:.4f}",
-                    f"{aggregated['Time (s)']['mean']:.2f}±{aggregated['Time (s)']['std']:.2f}",
+                    f"{aggregated['Time']['mean']:.2f}±{aggregated['Time']['std']:.2f}",
                 )
             )

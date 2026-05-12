@@ -1,18 +1,22 @@
 import argparse
 import os
-import numpy as np
-import torch
-from torch.utils.data import DataLoader
-from transformers import AutoConfig
-from popformer.models import (
-    PopformerForWindowClassification,
-    PopformerForSNPClassification,
-)
-from popformer.collators import HaploSimpleDataCollator
-from datasets import load_from_disk
-from tqdm import tqdm
+
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
+import torch
+from datasets import load_from_disk
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+from transformers import AutoConfig
+
+from popformer.collators import HaploSimpleDataCollator
+from popformer.models import (
+    PopformerForSNPClassification,
+    PopformerForWindowClassification,
+)
+
+BOS_TOKEN_FEATURE = os.environ.get("BOS_TOKEN_FEATURE") is not None
 
 
 def sweep(
@@ -21,11 +25,19 @@ def sweep(
     data = load_from_disk(dataset)
 
     # Detect model type
-    if model == "init":
-        conf = AutoConfig.from_pretrained("models/popf-small")
-        conf.torch_dtype = torch.float16
-        model = PopformerForWindowClassification(conf)
-        model_type = "window"
+    is_init = False
+    if "init" in model:
+        if os.path.exists("models/popf-init"):
+            model = PopformerForWindowClassification.from_pretrained(
+                "models/popf-init", torch_dtype=torch.float16
+            )
+            model_type = "window"
+            is_init = True
+        else:
+            conf = AutoConfig.from_pretrained("models/popf-base")
+            model = PopformerForWindowClassification(conf)
+            model.to(torch.float16)
+            model_type = "window"
     else:
         # Try to load as window model, fallback to SNP model
         try:
@@ -75,9 +87,14 @@ def sweep(
                 if save_preds_path:
                     preds.append(output["logits"].detach().cpu())
                 if save_features_path:
-                    features.append(
-                        output["hidden_states"].mean(dim=(1, 2)).detach().cpu()
-                    )
+                    if BOS_TOKEN_FEATURE:
+                        features.append(
+                            output["hidden_states"][:, :, 0].mean(dim=1).detach().cpu()
+                        )
+                    else:
+                        features.append(
+                            output["hidden_states"].mean(dim=(1, 2)).detach().cpu()
+                        )
                 # For plotting, keep window-level positions
                 if "positions" in batch:
                     # batch["positions"]: [B, L]
@@ -164,6 +181,10 @@ def sweep(
             end_pos=end_pos,
             chrom=chrom,
         )
+
+    if is_init:
+        # save model
+        model.save_pretrained("models/popf-init")
 
 
 def plot(out_fig_path, agg="mean"):
