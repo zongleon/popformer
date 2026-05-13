@@ -78,9 +78,8 @@ def experiment(features, train_set, test_size):
     print(f"Test set accuracy: {test_acc:.4f}")
 
     model_name = os.path.basename(features).split(".")[0]
-    dataset_name = os.path.basename(train_set).split(".")[0]
     os.makedirs("models/lp", exist_ok=True)
-    with open(f"models/lp/{model_name}-{test_size}_lp.pkl", "wb") as f:
+    with open(f"models/lp/{model_name}-{test_size}.pkl", "wb") as f:
         pickle.dump(classifier, f)
 
     return 0

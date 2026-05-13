@@ -5,32 +5,28 @@ vs background windows, FDR-vs-threshold curves, positive-vs-negative
 called-region curves, popformer ↔ summary-stat correlations, and
 null-distribution histograms from permutation tests.
 """
+
+import argparse
 import os
+
 import numpy as np
 import pandas as pd
-
 import theme
 from evaluation.evaluators import genome_classification
 from selection_config import (
-    make_nn_models,
-    make_summary_stat_models,
-    normalize,
     aggregate_windows,
-    run_all,
     collect_region_data,
-    sort_models,
+    make_summary_stat_models,
+    models_to_models,
+    normalize,
+    run_all,
 )
 
-
-# ---------------------------------------------------------------------------
-# Datasets & evaluators
-# ---------------------------------------------------------------------------
 GENOME_DATASETS = [
     "data/dataset/genome_CEU",
     "data/dataset/genome_CHB",
     "data/dataset/genome_YRI",
 ]
-# GENOME_DATASETS = []
 KNOWN_POS_PATH = "data/SEL/sel.csv"
 KNOWN_NEG_PATH = "data/SEL/reichsel_negs.csv"
 
@@ -38,8 +34,9 @@ AGG_WINDOW_N = 1
 
 pos_df = pd.read_csv(KNOWN_POS_PATH)
 neg_df = pd.read_csv(KNOWN_NEG_PATH)
-const1_df = pd.read_csv("data/matrices/bigregions/len200_ghist_const1.csv")
-const2_df = pd.read_csv("data/matrices/bigregions/len200_ghist_const2.csv")
+# const1_df = pd.read_csv("data/matrices/bigregions/len200_ghist_const1.csv")
+# const2_df = pd.read_csv("data/matrices/bigregions/len200_ghist_const2.csv")
+
 
 def build_evaluators(dataset_paths):
     evaluators = []
@@ -58,28 +55,25 @@ def build_evaluators(dataset_paths):
                 dataset_name=os.path.basename(path) + "_neg",
             )
         )
-   
-    evaluators.append(
-        genome_classification.GenomeClassificationEvaluator(
-            "data/dataset/len200_ghist_const1",
-            known_selection_region_df=const1_df,
-            dataset_name="constant",
-        )
-    ) 
-    evaluators.append(
-        genome_classification.GenomeClassificationEvaluator(
-            "data/dataset/len200_ghist_const2",
-            known_selection_region_df=const2_df,
-            dataset_name="constant2",
-        )
-    )
+
+    # evaluators.append(
+    #     genome_classification.GenomeClassificationEvaluator(
+    #         "data/dataset/len200_ghist_const1",
+    #         known_selection_region_df=const1_df,
+    #         dataset_name="constant",
+    #     )
+    # )
+    # evaluators.append(
+    #     genome_classification.GenomeClassificationEvaluator(
+    #         "data/dataset/len200_ghist_const2",
+    #         known_selection_region_df=const2_df,
+    #         dataset_name="constant2",
+    #     )
+    # )
 
     return evaluators
 
 
-# ---------------------------------------------------------------------------
-# Plotting helpers
-# ---------------------------------------------------------------------------
 def save_regions(results, datasets):
     for ds in datasets:
         rd = collect_region_data(results, ds)
@@ -104,7 +98,7 @@ def plot_regions(results, datasets, labels):
         if rd is None:
             continue
         model_names, preds_list, start_pos, end_pos, chrom = rd
-        
+
         genome_classification.plot_region(
             preds_list,
             model_names,
@@ -116,7 +110,9 @@ def plot_regions(results, datasets, labels):
             save_path=f"figs/sweeps/{ds}_region_plot.png",
         )
 
+
 def plot_boxplots(results, datasets):
+
     for ds in datasets:
         items = [
             (m, res["sig_mask"], res["preds"])
@@ -125,7 +121,7 @@ def plot_boxplots(results, datasets):
         ]
         if not items:
             continue
-        ordered = sort_models([m for m, _, _ in items])
+        ordered = [m for m, _, _ in items]
         item_map = {m: (mask, p) for m, mask, p in items}
         model_names = ordered
         y_preds = [normalize(m, item_map[m][1]) for m in ordered]
@@ -312,18 +308,25 @@ def plot_null_distributions(results):
         )
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    all_models = (
-        make_nn_models(train_ds="discoal_CEU", test_sizes=[0.05], suffix="discoal_CEU")
-        + make_summary_stat_models()
+    parser = argparse.ArgumentParser(description="Evaluate selection-detection models.")
+    parser.add_argument(
+        "--models", nargs="+", help="List of model names to evaluate", required=True
     )
+    parser.add_argument(
+        "--names", nargs="+", help="List of display names for the models", required=True
+    )
+    # parser.add_argument("--rocs", action="store_true", help="Plot ROC/PR curves")
+    # parser.add_argument(
+    #     "--varying", action="store_true", help="Plot varying bottlenecks/Ns"
+    # )
+    args = parser.parse_args()
+
+    all_models = models_to_models(args.models, args.names) + make_summary_stat_models()
     evaluators = build_evaluators(GENOME_DATASETS)
 
     results, df = run_all(all_models, evaluators, force=False)
-    models = sort_models(df["model"].unique().tolist())
+    models = df["model"].unique().tolist()
     datasets = df["dataset"].unique().tolist()
 
     if "obs" in df.columns:
@@ -343,9 +346,9 @@ if __name__ == "__main__":
 
         plot_pos_vs_neg_called(results, model_list, CEU_datasets, suffix=suffix)
 
-    save_regions(results, pos_datasets + ["constant", "constant2"])
-    if pos_datasets:
-        plot_correlations(results, models, pos_datasets[0])
-    plot_regions(results, ["constant", "constant2"], [const1_df, const2_df])
+    # save_regions(results, pos_datasets + ["constant", "constant2"])
+    # if pos_datasets:
+    #     plot_correlations(results, models, pos_datasets[0])
+    # plot_regions(results, ["constant", "constant2"], [const1_df, const2_df])
     # plot_boxplots(results, pos_datasets)
     # plot_null_distributions(results)

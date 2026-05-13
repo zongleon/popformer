@@ -1,10 +1,7 @@
-import warnings
-
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 import theme
-from selection_config import MODEL_ORDER
 from sklearn.metrics import (
     PrecisionRecallDisplay,
     RocCurveDisplay,
@@ -228,12 +225,12 @@ def plot_y_by_x(
         x=x,
         y=y,
         hue="model",
-        hue_order=[m for m in MODEL_ORDER if m in df_acc["model"].unique()],
+        hue_order=[m for m in theme.model_color_map if m in df_acc["model"].unique()],
         style="model",
-        style_order=[m for m in MODEL_ORDER if m in df_acc["model"].unique()],
+        style_order=[m for m in theme.model_color_map if m in df_acc["model"].unique()],
         err_style="bars",
         errorbar="sd",
-        palette=theme.colors,
+        palette=theme.model_color_map,
         markers=True,
         ax=ax,
     )

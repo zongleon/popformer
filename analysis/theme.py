@@ -1,5 +1,3 @@
-from itertools import cycle
-
 import matplotlib.pyplot as plt
 
 # style = "seaborn-v0_8-poster"
@@ -23,24 +21,28 @@ colors = [
     "#787878",
 ]
 model_color_map = {
+    # Popformer variants (shades of blue)
+    "popformer-no-pretrain": colors[0],
     "popformer-ft": colors[1],
     "popformer-lp": colors[2],
-    "popformer": colors[0],
-    "popformer-base": colors[0],
-    "popformer-no-pretrain": colors[0],
-    "FASTER-NN": colors[3],
-    "resnet34": colors[4],
+    "popformer": colors[0],  # base pretrained / short-name alias
+    "popformer-base": colors[0],  # base model alias
+    # Competing neural models
+    "FASTERNN": colors[3],
+    "resnet": colors[4],
+    # Summary statistics
     "tajimas_d": colors[8],
+    "sfs_1": colors[6],
+    "sfs_1_count": colors[6],
+    "sfs_2": colors[7],
+    "n_snps": colors[5],
+    # Imputation-task models
     "IMPUTE5": colors[3],
     "Nearest Neighbor": colors[4],
     "Column Frequency": colors[5],
 }
 
-
-# assign by default tab10 colors to models not in the above map
-def get_color(model):
-    return model_color_map.setdefault(model, cycle(colors))
-
+INVERT_SCORE_MODELS = ["tajimas_d"]
 
 dataset_rename_map = {
     "pan2CEU_test": "CEU",
@@ -51,25 +53,21 @@ dataset_rename_map = {
 }
 
 
-def get_model_base_name(model: str):
-    """Extract base model name by removing version/parameter suffixes."""
-    for key in model_color_map:
+def get_model_base_name(model: str) -> str:
+    """Strip version/parameter suffixes, returning the canonical base name.
+
+    Keys are checked longest-first so more specific names (e.g.
+    'popformer-no-pretrain') match before shorter prefixes ('popformer').
+    """
+    for key in sorted(model_color_map, key=len, reverse=True):
         if model.lower().startswith(key.lower()):
-            if key.lower() == "popformer":
-                # hardcoded, im sorry
-                return "popformer-no-pretrain"
             return key
     return model
 
 
-def model_to_color(model: str):
-    if model in model_color_map:
-        return model_color_map[model]
-
-    if get_model_base_name(model) in model_color_map:
-        return model_color_map[get_model_base_name(model)]
-
-    return cycle(colors)
+def model_to_color(model: str) -> str:
+    base = get_model_base_name(model)
+    return model_color_map.get(base, colors[hash(base) % len(colors)])
 
 
 pop_to_color = {

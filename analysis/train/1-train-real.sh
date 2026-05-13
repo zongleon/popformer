@@ -11,55 +11,58 @@
 
 set -euo pipefail
 
+TRAIN_DATASET=pan2CEU_train
+TRAIN_DATASET_PATH=./data/dataset/$TRAIN_DATASET
+
 # pre-train on 1000G dataset
 torchrun --nproc_per_node=4 analysis/train/train.py \
-    --dataset_path ./data/dataset/pt \
+    --dataset-path ./data/dataset/pt \
     --configuration popformer-base \
-    --output_path ./models/popf-base-real \
-    --mlm_probability 0.75 \
-    --span_mask_probability 0 \
-    --num_epochs 5 \
-    --batch_size 8 \
-    --learning_rate 0.00015
+    --output-path ./models/popf-base-real \
+    --mlm-probability 0.75 \
+    --span-mask-probability 0 \
+    --num-epochs 5 \
+    --batch-size 8 \
+    --learning-rate 0.00015
 
 # train models on simulated CEU
 python analysis/train/finetune.py \
     --mode selbin \
-    --dataset_path ./data/dataset/CEU_train \
-    --test_size 0.05 \
-    --num_epochs 10 \
-    --batch_size 2 \
-    --gradient_accumulation_steps 4 \
-    --learning_rate 1e-4 \
+    --dataset-path $TRAIN_DATASET_PATH \
+    --test-size 0.05 \
+    --num-epochs 10 \
+    --batch-size 2 \
+    --gradient-accumulation-steps 4 \
+    --learning-rate 1e-4 \
     --pretrained ./models/popf-base-real \
-    --output_path ./models/selbin-popf-base-real-CEU_train
+    --output-path ./models/selbin-popf-base-real-$TRAIN_DATASET
 
 python analysis/train/finetune.py \
     --mode selbin \
-    --dataset_path ./data/dataset/CEU_train \
-    --test_size 0.05 \
-    --num_epochs 10 \
-    --batch_size 2 \
-    --gradient_accumulation_steps 4 \
-    --learning_rate 1e-4 \
+    --dataset-path $TRAIN_DATASET_PATH \
+    --test-size 0.05 \
+    --num-epochs 10 \
+    --batch-size 2 \
+    --gradient-accumulation-steps 4 \
+    --learning-rate 1e-4 \
     --pretrained ./models/popf-init \
-    --output_path ./models/selbin-popf-init-CEU_train
+    --output-path ./models/selbin-popf-init-$TRAIN_DATASET
 
 python sweep.py \
     --model ./models/popf-base-real \
-    --data ./data/dataset/CEU_test \
-    --save_features ./features/popf-base-real__CEU_train.npz \
+    --data $TRAIN_DATASET_PATH \
+    --save_features ./features/popf-base-real__$TRAIN_DATASET.npz \
     --subsample 64
 
 python analysis/train/lp.py \
-    ./features/popf-base-real__CEU_train.npz \
-    ./data/dataset/CEU_train \
+    ./features/popf-base-real__$TRAIN_DATASET.npz \
+    $TRAIN_DATASET_PATH \
     0.05 # test size
 
 python analysis/train/schrider_resnet.py \
-    ./data/dataset/CEU_train \
+    $TRAIN_DATASET_PATH \
     0.05 # test size
 
 python analysis/train/fasternn.py \
-    ./data/dataset/CEU_train \
+    $TRAIN_DATASET_PATH \
     0.05 # test size

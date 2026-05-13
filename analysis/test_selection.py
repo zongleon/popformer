@@ -5,40 +5,19 @@ ROC-by-s grid for pan_test, accuracy-vs-train-size curves, and
 popformer ↔ summary-stat correlation scatter plots.
 """
 
+import argparse
+from signal import Handlers
+
 import matplotlib.pyplot as plt
 import numpy as np
 import theme
 from evaluation.evaluators import genome_classification, random_classification
-from evaluation.models.popformer import PopformerModel
-from evaluation.models.popformer_lp import PopformerLPModel
+from matplotlib.ticker import LogLocator
 from selection_config import (
+    make_summary_stat_models,
+    models_to_models,
     run_all,
-    sort_models,
 )
-
-SIMULATED_DATASETS = [
-    # "data/dataset/discoal_CEU",
-    # "data/dataset/discoal_CHB",
-    # "data/dataset/discoal_YRI",
-    # "data/dataset/discoal_consts_1000",
-    # "data/dataset/discoal_consts_5000",
-    # "data/dataset/discoal_consts_10000",
-    # "data/dataset/discoal_consts_50000",
-    # "data/dataset/discoal_consts_100000",
-    "data/dataset/discoal_bottlenecks_100",
-    "data/dataset/discoal_bottlenecks_500",
-    "data/dataset/discoal_bottlenecks_1000",
-    "data/dataset/discoal_bottlenecks_2500",
-    "data/dataset/discoal_bottlenecks_5000",
-    "data/dataset/discoal_bottlenecks_10000",
-    # "data/dataset/pan2CEU_test",
-    # "data/dataset/pan2CHB_test",
-    # "data/dataset/pan2YRI_test",
-    # "data/dataset/pan_4_test",
-    # "data/dataset/pan2_test_50000",
-    # "data/dataset/pan_3_demoid-0_balanced",
-    # "data/dataset/pan_3_demoid-1_balanced",
-]
 
 
 def build_evaluators(dataset_paths):
@@ -187,57 +166,58 @@ def plot_roc_by_s_f(results, models, dataset_name="pan_test"):
     plt.close()
 
 
-def plot_acc_vs_train_size(df, dataset_name="pan2CEU"):
-    df_acc = df[df["dataset"] == dataset_name].copy()
-    df_acc["train_size"] = df_acc["model"].apply(
-        lambda x: 1 - float(x.split("-")[-1]) if "-" in x else 0.0
-    )
-    df_acc["model"] = df_acc["model"].apply(
-        lambda x: "-".join(x.split("-")[:-1]) if "-" in x else x
-    )
-    df_acc = df_acc[["model", "train_size", "auprc"]].query(
-        "model not in ['sfs_1', 'sfs_1_count', 'sfs_2', 'n_snps']"
-    )
-    random_classification.plot_y_by_x(
-        df_acc,
-        y="auprc",
-        x="train_size",
-        save_path=f"figs/{dataset_name}_auprc_vs_train_size.png",
-    )
-
-
 def plot_acc_by_x(
     df,
     x: str,
     trained_on_line=None,
-    x_labels=None,
+    pretrained_on_line=None,
+    x_func=None,
     flip_x=False,
     log_x=False,
-    metric="easy_auc",
+    metric="auprc",
 ):
     df_acc = df[["model", "dataset", x, metric]].copy()
     df_acc = df_acc[~df_acc[x].isna()]
     df_acc = df_acc.query("model not in ['sfs_1', 'sfs_1_count', 'sfs_2', 'n_snps']")
     fig, ax = plt.subplots(figsize=(8, 6))
+    lines = []
     if trained_on_line is not None:
-        ax.axvline(
+        line1 = ax.axvline(
             trained_on_line,
             color="black",
-            linestyle="--",
-            linewidth=2,
+            linewidth=1,
             label="Training",
         )
+        lines.append(line1)
+    if pretrained_on_line is not None:
+        line2 = ax.axvline(
+            pretrained_on_line,
+            color="black",
+            linestyle="--",
+            linewidth=1,
+            label="Pre-training",
+        )
+        lines.append(line2)
     random_classification.plot_y_by_x(
-        df_acc, y=metric, x=x, save_path=f"figs/{metric}_vs_{x}.png", ax=ax
+        df_acc, y=metric, x=x, save_path=f"figs/{metric}_vs_{x}.png", ax=ax, logx=log_x
     )
-    if x_labels is not None:
-        ax.set_xticks(df_acc[x].unique())
-        ax.set_xticklabels(x_labels)
+    if x_func:
+        ax.xaxis.set_major_locator(LogLocator(base=10, subs=(1, 2, 5)))
+        ax.xaxis.set_major_formatter(x_func)
     if flip_x:
         ax.invert_xaxis()
-    if log_x:
-        ax.set_xscale("log")
-    ax.legend(loc="best")
+    if trained_on_line is not None or pretrained_on_line is not None:
+        legend = ax.legend(handles=lines, loc="upper right")
+        ax.add_artist(legend)
+    # add another legend for the models
+    # get the lines for the models from the plot except ones that start with '_'
+    # kinda hacky a lil
+    model_lines = [
+        line
+        for line in ax.get_lines()
+        if line not in lines and not line.get_label().startswith("_")
+    ]
+    ax.legend(handles=model_lines, loc="lower left")
     plt.savefig(f"figs/{metric}_vs_{x}.png", dpi=300, bbox_inches="tight")
 
 
@@ -271,32 +251,30 @@ def plot_popf_vs_summary_stats(results, models, dataset_name="pan_test"):
 
 
 if __name__ == "__main__":
-    all_models = [
-        PopformerLPModel(
-            model_path="models/popf-base-btl-1000-high",
-            lp_path="models/lp/popf-base-btl-1000-high_discoal_consts_10000-0.05_lp.pkl",
-            model_name="popformer-lp",
-            subsample=(64, 64),
-            subsample_type="random",
-        ),
-        PopformerModel(
-            model_path="models/selbin-init-discoal_consts_10000-0.05",
-            model_name="popformer-no-pretrain",
-            subsample=(64, 64),
-            subsample_type="random",
-        ),
-        PopformerModel(
-            model_path="models/selbin-base-btl-1000-high-discoal_consts_10000-0.05",
-            model_name="popformer-ft",
-            subsample=(64, 64),
-            subsample_type="random",
-        ),
-    ]
+    parser = argparse.ArgumentParser(description="Evaluate selection-detection models.")
+    parser.add_argument(
+        "--models", nargs="+", help="List of model names to evaluate", required=True
+    )
+    parser.add_argument(
+        "--names", nargs="+", help="List of display names for the models", required=True
+    )
+    parser.add_argument(
+        "--datasets",
+        nargs="+",
+        help="List of dataset names to evaluate on",
+        required=True,
+    )
+    parser.add_argument("--rocs", action="store_true", help="Plot ROC/PR curves")
+    parser.add_argument(
+        "--varying", action="store_true", help="Plot varying bottlenecks/Ns"
+    )
+    args = parser.parse_args()
 
-    evaluators = build_evaluators(SIMULATED_DATASETS)
+    all_models = models_to_models(args.models, args.names) + make_summary_stat_models()
+    evaluators = build_evaluators(args.datasets)
 
     results, df = run_all(all_models, evaluators, force=False)
-    models = sort_models(df["model"].unique().tolist())
+    models = df["model"].unique().tolist()
     datasets = df["dataset"].unique().tolist()
 
     # Print summary tables
@@ -304,35 +282,44 @@ if __name__ == "__main__":
         cols = ["model", "dataset", "accuracy", "precision", "recall", "auroc", "auprc"]
         print(df[cols].dropna().to_string())
 
-    df = df[~df["model"].str.contains("BOS")]
+    if args.rocs:
+        models = [
+            model
+            for model in models
+            if model not in ["sfs_1", "sfs_1_count", "sfs_2", "n_snps"]
+        ]
+        plot_classification_curves(results, models, datasets, roc_only=False)
 
-    # All plots
-    popf_models = [m for m in models if m.startswith("popformer") and "0.05" in m]
-    all_models = [m for m in models if "0.05" in m] + ["tajimas_d"]
+    if args.varying:
 
-    def label_bottleneck(x):
-        if "discoal_bottlenecks" in x:
-            if "10000" in x:
-                return "No bottleneck"
-            val = int(x.split("_")[-1]) / 10000 * 100
+        def btl_labeller(x, pos):
+            val = x / 10000 * 100
             val = round(val)
             return f"{val:d}%"
-        return np.nan
 
-    btl_labels = df["dataset"].apply(label_bottleneck)
-    btl_labels = btl_labels[~btl_labels.isna()].unique().tolist()
-    df["bottleneck"] = df["dataset"].apply(
-        lambda x: int(x.split("_")[-1]) if "discoal_bottlenecks" in x else np.nan
-    )
+        df["bottleneck"] = df["dataset"].apply(
+            lambda x: int(x.split("_")[-1]) if "discoal_bottlenecks" in x else np.nan
+        )
+        df["N"] = df["dataset"].apply(
+            lambda x: int(x.split("_")[-1]) if "discoal_consts" in x else np.nan
+        )
 
-    # for metric in ["auprc", "auprc_strong"]:
-    plot_acc_by_x(
-        df,
-        "bottleneck",
-        trained_on_line=10000,
-        x_labels=btl_labels,
-        flip_x=True,
-        log_x=True,
-        metric="auprc",
-    )
-    # plot_acc_by_x(df, "N", trained_on_line=10000, metric=metric, log_x=True)
+        if df["bottleneck"].notna().any():
+            plot_acc_by_x(
+                df,
+                "bottleneck",
+                trained_on_line=10000,
+                pretrained_on_line=1000,
+                x_func=btl_labeller,
+                flip_x=True,
+                log_x=True,
+            )
+        if df["N"].notna().any():
+            plot_acc_by_x(
+                df,
+                "N",
+                trained_on_line=10000,
+                x_labels=None,
+                flip_x=False,
+                log_x=True,
+            )

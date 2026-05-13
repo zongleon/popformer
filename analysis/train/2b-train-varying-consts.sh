@@ -2,9 +2,9 @@
 
 set -euo pipefail
 
-PRETRAIN_DATASET=discoal_consts_1000
+PRETRAIN_DATASET=discoal_consts_10000
 PRETRAIN_DATASET_PATH=data/dataset/$PRETRAIN_DATASET
-DATASET_NAME=discoal_consts_10000
+DATASET_NAME=discoal_consts_1000
 DATASET_PATH=data/dataset/$DATASET_NAME
 
 # pretrain

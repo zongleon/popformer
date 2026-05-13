@@ -1,9 +1,10 @@
 """Shared configuration, model builders, and runner for selection detection evaluation."""
 
+import os
+
 import numpy as np
 import pandas as pd
-import theme
-from evaluation.core import BaseEvaluator
+from evaluation.core import BaseEvaluator, BaseModel
 from evaluation.models import (
     fasternn,
     popformer,
@@ -11,43 +12,7 @@ from evaluation.models import (
     schrider_resnet,
     summary_stat,
 )
-
-# Canonical legend order
-MODEL_ORDER = [
-    "popformer",
-    "popformer-no-pretrain",
-    "popformer-ft",
-    "popformer-lp",
-    "FASTER-NN",
-    "resnet34",
-    "tajimas_d",
-    "sfs_1",
-    "sfs_1_count",
-    "sfs_2",
-    "n_snps",
-    "init (LP)",
-    "base (LP)",
-    "with span masking (LP)",
-    "high mask rate (LP)",
-    "init, (FT)",
-    "base, (FT)",
-    "with span masking, (FT)",
-    "high mask rate, (FT)",
-    "init, BOS (LP)",
-    "base, BOS (LP)",
-    "with span masking, BOS (LP)",
-    "high mask rate, BOS (LP)",
-]
-
-INVERT_SCORE_MODELS = ["tajimas_d"]
-
-
-def sort_models(names: list[str]) -> list[str]:
-    """Return *names* sorted according to MODEL_ORDER (unknowns go last)."""
-    rank = {m: i for i, m in enumerate(MODEL_ORDER)}
-    return sorted(
-        names, key=lambda n: rank.get(theme.get_model_base_name(n), len(MODEL_ORDER))
-    )
+from theme import INVERT_SCORE_MODELS
 
 
 def normalize(x: np.ndarray) -> np.ndarray:
@@ -67,44 +32,32 @@ def aggregate_windows(scores: np.ndarray, sig_mask: np.ndarray, n: int):
     return scores, sig_mask
 
 
-# ---------------------------------------------------------------------------
-# Model factories
-# ---------------------------------------------------------------------------
-def make_nn_models(train_ds, test_sizes: list[float], suffix="") -> list:
-    """Construct all neural-network-based selection models."""
-    suffix = suffix + "-" if suffix != "" else ""
-    models = []
-    for ts in test_sizes:
-        models += [
-            popformer.PopformerModel(
-                f"models/{train_ds}-{ts}",
-                f"popformer-{suffix}{ts}",
-                subsample=(64, 64),
-                subsample_type="diverse",
-            ),
-            popformer.PopformerModel(
-                f"models/selbin-ft-discoal-{train_ds}-{ts}",  # TODO
-                f"popformer-ftdlrr-{suffix}{ts}",
+def models_to_models(models: list[str], model_names: list[str]) -> list[BaseModel]:
+    """Convert model names to model instances."""
+    out_models = []
+    for model_path, model_name in zip(models, model_names):
+        if "fasternn" in model_path:
+            model = fasternn.FasterNNModel(model_path, model_name)
+        elif "resnet" in model_path:
+            model = schrider_resnet.SchriderResnet(model_path, model_name)
+        elif "lp" in model_path:
+            full_name = os.path.splitext(os.path.basename(model_path))[0]
+            pt_model = "models/" + full_name.split("__")[0]
+            model = popformer_lp.PopformerLPModel(
+                pt_model,
+                model_path,
+                model_name,
                 subsample=(64, 64),
                 subsample_type="random",
-            ),
-            popformer_lp.PopformerLPModel(
-                "models/popf-base-discoal",
-                f"models/lp/{train_ds}_popf-base-discoal-{ts}_lp.pkl",
-                f"popformer-lpdl-{suffix}{ts}",
-                subsample=(64, 64),
-                subsample_type="diverse",
-            ),
-            fasternn.FasterNNModel(
-                f"models/fasternn/fasternn_{train_ds}-{ts}.pt",
-                f"FASTER-NN-{suffix}{ts}",
-            ),
-            schrider_resnet.SchriderResnet(
-                model_path=f"models/schrider_resnet/resnet_{train_ds}-{ts}.pt",
-                model_name=f"resnet34-{suffix}{ts}",
-            ),
-        ]
-    return models
+            )
+        else:
+            model = popformer.PopformerModel(
+                model_path, model_name, subsample=(64, 64), subsample_type="random"
+            )
+
+        out_models.append(model)
+
+    return out_models
 
 
 def make_summary_stat_models() -> list:
@@ -157,7 +110,7 @@ def collect_region_data(results: dict, dataset_name: str):
         for (m, ds), res in results.items()
         if ds == dataset_name and "region_plot_data" in res
     ]
-    order = {name: i for i, name in enumerate(sort_models([m for m, _ in items]))}
+    order = {name: i for i, name in enumerate([m for m, _ in items])}
     items.sort(key=lambda x: order[x[0]])
     if not items:
         return None

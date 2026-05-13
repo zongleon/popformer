@@ -22,7 +22,7 @@ Below are the details of the training experiments performed for the study.
 
 ## 1. Real data pipeline
 
-see `train-real.sh`
+see `1-train-real.sh`
 
 1. Pretrain on 1000G real data
 2. Train on simulated CEU
@@ -31,11 +31,11 @@ see `train-real.sh`
 
 ## 2. Pretraining effects
 
-see `train-varying.sh`
+see `2a-train-varying-bottlenecks.sh` and `2b-train-varying-consts.sh`
 
 For varying bottlenecks, constant sizes:
 
-1. Pretrain on specific simulated dataset (e.g. 10% bottleneck, N=1000)
+1. Pretrain on specific simulated dataset (10% bottleneck, N=1000)
 2. Train on simulated data (e.g. [100%] bottleneck, N=[10000])
 3. Evaluate on other simulated datasets
 
@@ -43,6 +43,6 @@ For varying bottlenecks, constant sizes:
 
 For constant N=10000:
 
-1. Pretrain on N=10000
+1. Pretrain on held-out N=10000
 2. Train on N=10000, various train sizes
 3. Evaluate on N=10000
