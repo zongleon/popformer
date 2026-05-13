@@ -2,11 +2,11 @@
 Re-implement of Faster-NN model training for evaluation.
 """
 
-from datasets import load_from_disk
-from torch.utils.data import DataLoader
-
 import os
 import sys
+
+from datasets import load_from_disk
+from torch.utils.data import DataLoader
 
 sys.path.append("analysis/")
 from evaluation.models.fasternn import FasterNNModel
@@ -15,8 +15,14 @@ test_size = 0.05
 if len(sys.argv) > 2:
     test_size = float(sys.argv[2])
 
+path = f"models/fasternn/fasternn_{os.path.basename(os.path.normpath(sys.argv[1]))}-{test_size}.pt"
+# exit if output path already exists
+if os.path.exists(path):
+    print(f"Output path {path} already exists. Exiting.")
+    raise SystemExit
+
 model = FasterNNModel(
-    model_path=f"models/fasternn/fasternn_{os.path.basename(os.path.normpath(sys.argv[1]))}-{test_size}.pt",
+    model_path=path,
     model_name="FASTER-NN",
     from_init=True,
 )

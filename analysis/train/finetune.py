@@ -1,21 +1,24 @@
+import argparse
+import os
+
 import torch
-from popformer.models import (
-    PopformerForSNPClassification,
-    PopformerForWindowClassification,
-)
-from transformers import EarlyStoppingCallback, TrainingArguments, Trainer, AutoConfig
 from datasets import load_from_disk
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
+    confusion_matrix,
     f1_score,
     mean_absolute_error,
     mean_squared_error,
     r2_score,
-    confusion_matrix,
 )
+from transformers import AutoConfig, EarlyStoppingCallback, Trainer, TrainingArguments
+
 from popformer.collators import HaploSimpleDataCollator
-import argparse
+from popformer.models import (
+    PopformerForSNPClassification,
+    PopformerForWindowClassification,
+)
 
 parser = argparse.ArgumentParser(description="finetune")
 parser.add_argument(
@@ -58,6 +61,11 @@ parser.add_argument(
 parser.add_argument("--attn-pool", action="store_true", help="Use attention pooling")
 
 args = parser.parse_args()
+
+# exit if output path already exists
+if os.path.exists(args.output_path):
+    print(f"Output path {args.output_path} already exists. Exiting.")
+    raise SystemExit
 
 MODE = args.mode
 dataset_path = args.dataset_path
@@ -154,7 +162,8 @@ if args.freeze_layers_up_to > 0:
 
 collator = HaploSimpleDataCollator(
     # subsample=(64, 64), subsample_type="diverse", label_dtype=typ
-    subsample=(64, 64), label_dtype=typ
+    subsample=(64, 64),
+    label_dtype=typ,
 )
 # collator = HaploSimpleDataCollator(
 #     label_dtype=typ, subsample=(32, 32), subsample_type="random"

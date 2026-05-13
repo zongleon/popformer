@@ -46,8 +46,7 @@ def grid_search_C(
     return float(best_C)
 
 
-def experiment(features, train_set, test_size):
-    print(f"\n=== Model: {model}, Train set: {train_set} ===")
+def experiment(features, train_set, test_size, output_path):
     train_features = load_features(features)
     train_labels = load_labels(train_set, label_column="label")
 
@@ -77,20 +76,27 @@ def experiment(features, train_set, test_size):
     test_acc = (y_test == (test_pred >= 0.5)).mean()
     print(f"Test set accuracy: {test_acc:.4f}")
 
-    model_name = os.path.basename(features).split(".")[0]
-    os.makedirs("models/lp", exist_ok=True)
-    with open(f"models/lp/{model_name}-{test_size}.pkl", "wb") as f:
+    with open(output_path, "wb") as f:
         pickle.dump(classifier, f)
 
     return 0
 
 
 if __name__ == "__main__":
-    model = sys.argv[1]
+    features = sys.argv[1]
     train_data = sys.argv[2]
 
     test_size = 0.05
     if len(sys.argv) > 3:
         test_size = float(sys.argv[3])
 
-    experiment(model, train_data, test_size)
+    os.makedirs("models/lp", exist_ok=True)
+    model_name = os.path.basename(features).split(".")[0]
+    path = f"models/lp/{model_name}-{test_size}.pkl"
+
+    # exit if output path already exists
+    if os.path.exists(path):
+        print(f"Output path {path} already exists. Exiting.")
+        raise SystemExit
+
+    experiment(features, train_data, test_size, path)

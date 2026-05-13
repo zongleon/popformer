@@ -4,6 +4,7 @@ with scripts/cluster/pretrain.sh on SLURM.
 """
 
 import argparse
+import os
 
 from datasets import load_from_disk
 from transformers import (
@@ -56,6 +57,11 @@ parser.add_argument(
 parser.add_argument("--learning-rate", type=float, default=1e-4, help="Learning rate")
 
 args = parser.parse_args()
+
+# exit if output path already exists
+if os.path.exists(args.output_path):
+    print(f"Output path {args.output_path} already exists. Exiting.")
+    raise SystemExit
 
 # load dataset
 dataset = load_from_disk(args.dataset_path)

@@ -3,11 +3,11 @@ Re-implement of Resnet34 from Schrider GNN paper
 Runs model training for evaluation.
 """
 
-from datasets import load_from_disk
-from torch.utils.data import DataLoader
-
 import os
 import sys
+
+from datasets import load_from_disk
+from torch.utils.data import DataLoader
 
 sys.path.append("analysis/")
 from evaluation.models.schrider_resnet import SchriderResnet
@@ -16,8 +16,15 @@ test_size = 0.05
 if len(sys.argv) > 2:
     test_size = float(sys.argv[2])
 
+path = f"models/schrider_resnet/resnet_{os.path.basename(os.path.normpath(sys.argv[1]))}-{test_size}.pt"
+
+# exit if output path already exists
+if os.path.exists(path):
+    print(f"Output path {path} already exists. Exiting.")
+    raise SystemExit
+
 model = SchriderResnet(
-    model_path=f"models/schrider_resnet/resnet_{os.path.basename(os.path.normpath(sys.argv[1]))}-{test_size}.pt",
+    model_path=path,
     model_name="resnet34",
     from_init=True,
 )
