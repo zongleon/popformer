@@ -11,39 +11,39 @@ DATASET_PATH=data/dataset/$DATASET_NAME
 PRETRAINED_MODEL=popf-base-$PRETRAIN_DATASET
 PRETRAINED_MODEL_PATH=./models/$PRETRAINED_MODEL
 python analysis/train/train.py \
-    --dataset_path $PRETRAIN_DATASET_PATH \
+    --dataset-path $PRETRAIN_DATASET_PATH \
     --configuration popformer-base \
-    --output_path $PRETRAINED_MODEL_PATH \
-    --mlm_probability 0.75 \
-    --span_mask_probability 0 \
-    --num_epochs 5 \
-    --batch_size 2 \
-    --gradient_accumulation_steps 4 \
-    --learning_rate 0.00015
+    --output-path $PRETRAINED_MODEL_PATH \
+    --mlm-probability 0.75 \
+    --span-mask-probability 0 \
+    --num-epochs 5 \
+    --batch-size 2 \
+    --gradient-accumulation-steps 4 \
+    --learning-rate 0.00015
 
 # train models on dataset
 # finetunes
 python analysis/train/finetune.py \
     --mode selbin \
-    --dataset_path $DATASET_PATH \
-    --test_size 0.05 \
-    --num_epochs 10 \
-    --batch_size 2 \
-    --gradient_accumulation_steps 4 \
-    --learning_rate 1e-4 \
+    --dataset-path $DATASET_PATH \
+    --test-size 0.05 \
+    --num-epochs 10 \
+    --batch-size 2 \
+    --gradient-accumulation-steps 4 \
+    --learning-rate 1e-4 \
     --pretrained $PRETRAINED_MODEL_PATH \
-    --output_path ./models/selbin-${PRETRAINED_MODEL}-${DATASET_NAME}
+    --output-path ./models/selbin-${PRETRAINED_MODEL}-${DATASET_NAME}
 
 python analysis/train/finetune.py \
     --mode selbin \
-    --dataset_path $DATASET_PATH \
-    --test_size 0.05 \
-    --num_epochs 10 \
-    --batch_size 2 \
-    --gradient_accumulation_steps 4 \
-    --learning_rate 1e-4 \
+    --dataset-path $DATASET_PATH \
+    --test-size 0.05 \
+    --num-epochs 10 \
+    --batch-size 2 \
+    --gradient-accumulation-steps 4 \
+    --learning-rate 1e-4 \
     --pretrained ./models/popf-init \
-    --output_path ./models/selbin-popf-init-${DATASET_NAME}
+    --output-path ./models/selbin-popf-init-${DATASET_NAME}
 
 # linear probe
 FEATURES_PATH=./features/${PRETRAINED_MODEL}__${DATASET_NAME}.npz

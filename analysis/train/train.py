@@ -39,6 +39,12 @@ parser.add_argument(
     "--batch-size", type=int, default=8, help="Batch size for training and evaluation"
 )
 parser.add_argument(
+    "--gradient-accumulation-steps",
+    type=int,
+    default=1,
+    help="Number of gradient accumulation steps",
+)
+parser.add_argument(
     "--test-size", type=float, default=0.05, help="Evaluation split size"
 )
 parser.add_argument(
@@ -106,6 +112,7 @@ training_args = TrainingArguments(
     num_train_epochs=args.num_epochs,
     per_device_train_batch_size=args.batch_size,
     per_device_eval_batch_size=args.batch_size,
+    gradient_accumulation_steps=args.gradient_accumulation_steps,
     warmup_ratio=0.1,
     weight_decay=0.01,
     logging_dir="./logs",
