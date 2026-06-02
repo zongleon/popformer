@@ -45,8 +45,7 @@ class RandomClassificationEvaluator(BaseHFEvaluator):
         pos_preds_metrics = pos_preds
         binary_preds_metrics = binary_preds
         if kwargs.get("invert_for_metrics", False):
-            pos_preds_metrics = 1 - pos_preds_metrics
-            binary_preds_metrics = 1 - binary_preds_metrics
+            pos_preds_metrics = -1 * pos_preds_metrics
 
         accs = []
         aucrocs = []
@@ -93,7 +92,7 @@ class RandomClassificationEvaluator(BaseHFEvaluator):
             {
                 "model_name": self.model_name,
                 "accuracy": accs,
-                "auroc": aucrocs,
+                "auc": aucrocs,
                 "auprc": auprcs,
                 "precision": precisions,
                 "recall": recalls,
@@ -173,9 +172,10 @@ def plot_curves(
         else:
             return {"color": theme.model_to_color(model_name)}
 
-    for i, (y_true, y_score, model_name) in enumerate(
-        zip(y_trues, y_scores, model_names)
-    ):
+    zipped = zip(y_trues, y_scores, model_names)
+    model_order = list(theme.model_color_map.keys())
+    zipped = sorted(zipped, key=lambda x: model_order.index(x[2]))
+    for i, (y_true, y_score, model_name) in enumerate(zipped):
         if y_true is None:
             continue
         plot_fn(

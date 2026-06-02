@@ -120,7 +120,7 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
         preds = predictions[:, 1]
         preds_metrics = preds
         if kwargs.get("invert_for_metrics", False):
-            preds_metrics = 1 - preds
+            preds_metrics = -1 * preds
         results = {
             "preds": preds,
             "preds_for_metrics": preds_metrics,
@@ -413,11 +413,13 @@ def plot_rate_vs_threshold(
     save_path="figs/fnr_vs_threshold.png",
 ):
     fig, ax = plt.subplots(figsize=(8, 6))
-    for model_name, thresholds, fdr in fdr_series:
+    model_order = list(theme.model_color_map.keys())
+    fdr_series = sorted(fdr_series, key=lambda x: model_order.index(x[0]))
+    for model_name, thresholds, fdr, auc in fdr_series:
         ax.plot(
             thresholds,
             fdr,
-            label=theme.get_model_base_name(model_name),
+            label=theme.get_model_base_name(model_name) + f" (AUC: {auc:.2f})",
             color=theme.model_to_color(model_name),
         )
     ax.set_xlabel("Fraction of genome predicted selected")
@@ -447,11 +449,13 @@ def plot_called_pos_vs_neg(
         Output figure path.
     """
     fig, ax = plt.subplots(figsize=(8, 6))
-    for model_name, neg_called, pos_called in called_series:
+    model_order = list(theme.model_color_map.keys())
+    called_series = sorted(called_series, key=lambda x: model_order.index(x[0]))
+    for model_name, neg_called, pos_called, auc in called_series:
         ax.plot(
             neg_called,
             pos_called,
-            label=theme.get_model_base_name(model_name),
+            label=theme.get_model_base_name(model_name) + f" (AUC: {auc:.2f})",
             color=theme.model_to_color(model_name),
         )
 

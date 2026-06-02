@@ -11,11 +11,17 @@
 
 set -euo pipefail
 
-TRAIN_DATASET=pan2CEU_train
+TRAIN_DATASET=pan2_train
 TRAIN_DATASET_PATH=./data/dataset/$TRAIN_DATASET
 
 # pre-train on 1000G dataset
-torchrun --nproc_per_node=4 analysis/train/train.py \
+# if slurm use torchrun, else just python
+if [ -v SLURM_JOB_ID ]; then
+    cmd="torchrun --nproc_per_node=4"
+else
+    cmd="python"
+fi
+$cmd analysis/train/train.py \
     --dataset-path ./data/dataset/pt \
     --configuration popformer-base \
     --output-path ./models/popf-base-real \

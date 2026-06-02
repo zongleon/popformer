@@ -97,9 +97,10 @@ def run_all(
     df.index = pd.MultiIndex.from_tuples(df.index, names=["model", "dataset"])
     df = df.reset_index().sort_values(by=["dataset", "model"])
     # explode the metrics columns into separate rows
-    df = df.explode(
-        ["accuracy", "auroc", "auprc", "precision", "recall", "balanced_accuracy"]
-    )
+    if "accuracy" in df.columns:
+        df = df.explode(
+            ["accuracy", "auc", "auprc", "precision", "recall", "balanced_accuracy"]
+        )
     return results, df
 
 

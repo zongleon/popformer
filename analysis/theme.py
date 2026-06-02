@@ -28,10 +28,10 @@ model_color_map = {
     "popformer": colors[0],  # base pretrained / short-name alias
     "popformer-base": colors[0],  # base model alias
     # Competing neural models
-    "FASTERNN": colors[3],
-    "resnet": colors[4],
+    "FASTER-NN": colors[3],
+    "resnet34": colors[4],
     # Summary statistics
-    "tajimas_d": colors[8],
+    "tajimas_d": colors[5],
     "sfs_1": colors[6],
     "sfs_1_count": colors[6],
     "sfs_2": colors[7],

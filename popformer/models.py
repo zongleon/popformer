@@ -1,4 +1,5 @@
 from typing import Optional
+
 import torch
 import torch.nn as nn
 from jaxtyping import Float, Int, Shaped
@@ -80,16 +81,18 @@ class PopformerClassificationHead(nn.Module):
         **kwargs,
     ) -> Float[torch.Tensor, "batch num_labels"]:
         if attention_mask is not None:
-            mask = attention_mask.to(features.dtype).unsqueeze(-1)
-            x = (features * mask).sum(dim=(1, 2))
+            mask = attention_mask.to(torch.float32).unsqueeze(-1)
+            x = (features.to(torch.float32) * mask).sum(dim=(1, 2))
             x = x / mask.sum(dim=(1, 2)).clamp(min=1.0)
         else:
-            x = features.mean(dim=(1, 2))  # take mean across haps, snps
+            x = features.to(torch.float32).mean(
+                dim=(1, 2)
+            )  # take mean across haps, snps
         # x = self.layer_norm(x)
         # x = self.dense(x)
         # x = torch.tanh(x)
         # x = self.dropout(x)
-        x = self.out_proj(x)
+        x = self.out_proj(x.to(features.dtype))
         return x
 
 
@@ -169,7 +172,7 @@ class PopformerClassificationAttnPoolingHead(nn.Module):
         return self.out_proj(pooled)
 
 
-class PopformerForWindowClassification(RobertaForSequenceClassification): 
+class PopformerForWindowClassification(RobertaForSequenceClassification):
     """RobertaForSequenceClassification that accepts distances in forward pass."""
 
     def __init__(self, config):
@@ -189,7 +192,9 @@ class PopformerForWindowClassification(RobertaForSequenceClassification):
         input_ids: Int[torch.Tensor, "batch n_haps n_snps"] | None = None,
         distances: Int[torch.Tensor, "batch n_snps n_snps"] | None = None,
         attention_mask: Shaped[torch.Tensor, "batch n_haps n_snps"] | None = None,
-        labels: Float[torch.Tensor, " batch"] | Int[torch.Tensor, " batch"] | None = None,
+        labels: Float[torch.Tensor, " batch"]
+        | Int[torch.Tensor, " batch"]
+        | None = None,
         return_hidden_states: bool = False,
         **kwargs,
     ) -> dict[str, torch.Tensor | None]:

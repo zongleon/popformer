@@ -6,7 +6,6 @@ popformer ↔ summary-stat correlation scatter plots.
 """
 
 import argparse
-from signal import Handlers
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -171,9 +170,11 @@ def plot_acc_by_x(
     x: str,
     trained_on_line=None,
     pretrained_on_line=None,
+    taj_line=None,
     x_func=None,
     flip_x=False,
     log_x=False,
+    legend_placement="lower left",
     metric="auprc",
 ):
     df_acc = df[["model", "dataset", x, metric]].copy()
@@ -198,16 +199,26 @@ def plot_acc_by_x(
             label="Pre-training",
         )
         lines.append(line2)
+    if taj_line is not None:
+        ax.axhline(
+            taj_line,
+            color=theme.model_color_map["tajimas_d"],
+            linewidth=2,
+            label="tajimas_d",
+        )
     random_classification.plot_y_by_x(
         df_acc, y=metric, x=x, save_path=f"figs/{metric}_vs_{x}.png", ax=ax, logx=log_x
     )
     if x_func:
-        ax.xaxis.set_major_locator(LogLocator(base=10, subs=(1, 2, 5)))
+        x_func, subs = x_func
+        ax.xaxis.set_major_locator(LogLocator(base=10, subs=subs))
         ax.xaxis.set_major_formatter(x_func)
     if flip_x:
         ax.invert_xaxis()
     if trained_on_line is not None or pretrained_on_line is not None:
-        legend = ax.legend(handles=lines, loc="upper right")
+        legend = ax.legend(
+            handles=lines, loc="upper right" if x == "bottleneck" else "center left"
+        )
         ax.add_artist(legend)
     # add another legend for the models
     # get the lines for the models from the plot except ones that start with '_'
@@ -217,7 +228,7 @@ def plot_acc_by_x(
         for line in ax.get_lines()
         if line not in lines and not line.get_label().startswith("_")
     ]
-    ax.legend(handles=model_lines, loc="lower left")
+    ax.legend(handles=model_lines, loc=legend_placement)
     plt.savefig(f"figs/{metric}_vs_{x}.png", dpi=300, bbox_inches="tight")
 
 
@@ -268,6 +279,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--varying", action="store_true", help="Plot varying bottlenecks/Ns"
     )
+    parser.add_argument("--trainsizes", action="store_true", help="Plot train sizes")
+    parser.add_argument(
+        "--metric",
+        type=str,
+        default="auprc",
+        help="Metric to plot against x (default: auprc)",
+    )
+    parser.add_argument("--trained-on", type=int, default=10000)
     args = parser.parse_args()
 
     all_models = models_to_models(args.models, args.names) + make_summary_stat_models()
@@ -279,7 +298,7 @@ if __name__ == "__main__":
 
     # Print summary tables
     if "accuracy" in df.columns:
-        cols = ["model", "dataset", "accuracy", "precision", "recall", "auroc", "auprc"]
+        cols = ["model", "dataset", "accuracy", "precision", "recall", "auc", "auprc"]
         print(df[cols].dropna().to_string())
 
     if args.rocs:
@@ -289,6 +308,8 @@ if __name__ == "__main__":
             if model not in ["sfs_1", "sfs_1_count", "sfs_2", "n_snps"]
         ]
         plot_classification_curves(results, models, datasets, roc_only=False)
+        plot_roc_by_s(results, models, dataset_name=datasets[0])
+        plot_popf_vs_summary_stats(results, models, dataset_name=datasets[0])
 
     if args.varying:
 
@@ -296,6 +317,9 @@ if __name__ == "__main__":
             val = x / 10000 * 100
             val = round(val)
             return f"{val:d}%"
+
+        def N_labeller(x, pos):
+            return f"{round(x):d}"
 
         df["bottleneck"] = df["dataset"].apply(
             lambda x: int(x.split("_")[-1]) if "discoal_bottlenecks" in x else np.nan
@@ -308,9 +332,10 @@ if __name__ == "__main__":
             plot_acc_by_x(
                 df,
                 "bottleneck",
+                metric=args.metric,
                 trained_on_line=10000,
                 pretrained_on_line=1000,
-                x_func=btl_labeller,
+                x_func=(btl_labeller, (10, 5, 2)),
                 flip_x=True,
                 log_x=True,
             )
@@ -318,8 +343,35 @@ if __name__ == "__main__":
             plot_acc_by_x(
                 df,
                 "N",
-                trained_on_line=10000,
-                x_labels=None,
-                flip_x=False,
+                metric=args.metric,
+                trained_on_line=args.trained_on,
+                pretrained_on_line=10000,
+                x_func=(N_labeller, (10, 5)),
+                flip_x=args.trained_on > 10000,
                 log_x=True,
             )
+
+    if args.trainsizes:
+
+        def ts_labeller(x, pos):
+            return f"{x:g}"
+
+        unsup = ["tajimas_d", "sfs_1", "sfs_1_count", "sfs_2", "n_snps"]
+        # there's a bad one
+        df = df[df["model"] != "resnet34-0.99"]
+        df["train_size"] = df["model"].apply(
+            lambda x: (
+                # f"{(1 - float(x.split('-')[-1])) * 100:.1f}%"
+                20000 * (1 - float(x.split("-")[-1])) if x not in unsup else np.nan
+            )
+        )
+        unsup_score = df[df["model"] == "tajimas_d"][args.metric].values[0]
+        plot_acc_by_x(
+            df,
+            "train_size",
+            metric=args.metric,
+            x_func=(ts_labeller, (10, 1)),
+            log_x=True,
+            taj_line=unsup_score,
+            legend_placement="lower right",
+        )

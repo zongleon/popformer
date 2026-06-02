@@ -259,6 +259,15 @@ if __name__ == "__main__":
         # dataset = dataset.filter(lambda x: x["label"] == 0)
         dataset.save_to_disk("data/dataset/pt_discoal")
 
+    elif mode == "runsel_combinepops":
+        pops = ["pan2CEU_train", "pan2YRI_train", "pan2CHB_train"]
+        dss = []
+        for pop in pops:
+            dataset = load_from_disk(f"data/dataset/{pop}")
+            dss.append(dataset)
+        dataset = concatenate_datasets(dss)
+        dataset.save_to_disk("data/dataset/pan2_train")
+
     elif mode == "runselms":
         pop = sys.argv[2]
         s = [

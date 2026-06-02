@@ -27,13 +27,15 @@ GENOME_DATASETS = [
     "data/dataset/genome_CHB",
     "data/dataset/genome_YRI",
 ]
-KNOWN_POS_PATH = "data/SEL/sel.csv"
-KNOWN_NEG_PATH = "data/SEL/reichsel_negs.csv"
+ANC_POS_PATH = "data/SEL/reichsel.csv"
+ANC_NEG_PATH = "data/SEL/reichsel_negs.csv"
+GRO_POS_PATH = "data/SEL/sel.csv"
 
 AGG_WINDOW_N = 1
 
-pos_df = pd.read_csv(KNOWN_POS_PATH)
-neg_df = pd.read_csv(KNOWN_NEG_PATH)
+anc_pos_df = pd.read_csv(ANC_POS_PATH)
+anc_neg_df = pd.read_csv(ANC_NEG_PATH)
+pos_df = pd.read_csv(GRO_POS_PATH)
 # const1_df = pd.read_csv("data/matrices/bigregions/len200_ghist_const1.csv")
 # const2_df = pd.read_csv("data/matrices/bigregions/len200_ghist_const2.csv")
 
@@ -41,20 +43,23 @@ neg_df = pd.read_csv(KNOWN_NEG_PATH)
 def build_evaluators(dataset_paths):
     evaluators = []
     for path in dataset_paths:
+        # known = pos_df if "CEU" not in path else anc_pos_df
+        known = pos_df
         evaluators.append(
             genome_classification.GenomeClassificationEvaluator(
                 path,
-                known_selection_region_df=pos_df,
+                known_selection_region_df=known,
                 dataset_name=os.path.basename(path) + "_pos",
             )
         )
-        evaluators.append(
-            genome_classification.GenomeClassificationEvaluator(
-                path,
-                known_selection_region_df=neg_df,
-                dataset_name=os.path.basename(path) + "_neg",
+        if "CEU" in path:
+            evaluators.append(
+                genome_classification.GenomeClassificationEvaluator(
+                    path,
+                    known_selection_region_df=anc_neg_df,
+                    dataset_name=os.path.basename(path) + "_neg",
+                )
             )
-        )
 
     # evaluators.append(
     #     genome_classification.GenomeClassificationEvaluator(
@@ -154,7 +159,8 @@ def plot_rate(results, models, datasets, suffix=""):
             frac_called = np.array(
                 [np.sum(preds >= t) / len(preds) for t in thresholds]
             )
-            rate_series.append((m, frac_called, tpr))
+            auc = np.trapezoid(tpr[::-1], frac_called[::-1])
+            rate_series.append((m, frac_called, tpr, auc))
 
         if rate_series:
             genome_classification.plot_rate_vs_threshold(
@@ -259,8 +265,8 @@ def plot_pos_vs_neg_called(results, models, datasets, suffix=""):
             neg_called = np.array(
                 [np.sum((neg_preds >= t) & neg_mask) for t in thresholds]
             )
-
-            called_series.append((m, neg_called, pos_called))
+            auc = np.trapezoid(pos_called, neg_called) / (neg_mask.sum() * pos_mask.sum())
+            called_series.append((m, neg_called, pos_called, auc))
 
         if called_series:
             genome_classification.plot_called_pos_vs_neg(
@@ -316,10 +322,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--names", nargs="+", help="List of display names for the models", required=True
     )
-    # parser.add_argument("--rocs", action="store_true", help="Plot ROC/PR curves")
-    # parser.add_argument(
-    #     "--varying", action="store_true", help="Plot varying bottlenecks/Ns"
-    # )
     args = parser.parse_args()
 
     all_models = models_to_models(args.models, args.names) + make_summary_stat_models()
@@ -335,20 +337,18 @@ if __name__ == "__main__":
 
     popf_models = [m for m in models if m.startswith("popformer")]
     unused_stat_models = ["sfs_1", "sfs_2", "n_snps"]
-    all_models = [m for m in models if "0.05" in m] + ["tajimas_d"]
+    all_models = [m for m in models if m not in unused_stat_models]
 
     pos_datasets = [ds for ds in datasets if ds.endswith("_pos")]
     CEU_datasets = [ds for ds in datasets if "CEU" in ds]
 
-    for model_list, suffix in [(all_models, "all"), (popf_models, "popformer")]:
-        # plot_enrichment(subset_res, pos_datasets, suffix=suffix)
-        plot_rate(results, model_list, pos_datasets, suffix=suffix)
+    plot_rate(results, all_models, pos_datasets)
 
-        plot_pos_vs_neg_called(results, model_list, CEU_datasets, suffix=suffix)
+    plot_pos_vs_neg_called(results, all_models, CEU_datasets)
 
-    # save_regions(results, pos_datasets + ["constant", "constant2"])
+    save_regions(results, pos_datasets)
     # if pos_datasets:
-    #     plot_correlations(results, models, pos_datasets[0])
+    plot_correlations(results, models, pos_datasets[0])
     # plot_regions(results, ["constant", "constant2"], [const1_df, const2_df])
     # plot_boxplots(results, pos_datasets)
     # plot_null_distributions(results)

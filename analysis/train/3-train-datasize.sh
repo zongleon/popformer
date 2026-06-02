@@ -31,6 +31,7 @@ python analysis/train/train.py \
 mkdir -p features
 FEATURES_PATH=./features/${PRETRAINED_MODEL}__${DATASET_NAME}.npz
 
+echo $FEATURES_PATH
 python sweep.py \
     --data $DATASET_PATH \
     --model $PRETRAINED_MODEL_PATH \
@@ -38,7 +39,8 @@ python sweep.py \
     --subsample 64
 
 # train models on dataset
-for test_size in 0.05 0.5 0.9 0.95 0.99 0.995; do
+# for test_size in 0.05 0.5 0.9 0.95 0.99 0.995 0.999 0.9995; do
+for test_size in 0.9995; do
     python analysis/train/finetune.py \
         --mode selbin \
         --dataset-path $DATASET_PATH \
@@ -68,10 +70,10 @@ for test_size in 0.05 0.5 0.9 0.95 0.99 0.995; do
 
     python analysis/train/schrider_resnet.py \
         $DATASET_PATH \
-        test_size
+        $test_size
 
     python analysis/train/fasternn.py \
         $DATASET_PATH \
-        test_size
+        $test_size
 
 done

@@ -470,6 +470,9 @@ def main():
     preds_path = None
 
     if args.save_logits or args.save_features:
+        if os.path.exists(args.save_features):
+            print("Skipping sweep for features that already exist.")
+            raise SystemExit
         preds_path = args.save_logits
         sweep(
             data, model, args.save_logits, args.save_features, subsample=args.subsample
