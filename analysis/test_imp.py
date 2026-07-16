@@ -95,7 +95,7 @@ def test_masked_lm(model_path, dataset):
     # ax2.imshow(color(gt_img[0]), aspect='auto', cmap='Greys', interpolation="none")
     # ax2.set_title("ground truth")
 
-    plt.savefig("figs/imputation/example.png", dpi=300, bbox_inches="tight")
+    plt.savefig("figs/imputation/example.pdf", dpi=300, bbox_inches="tight")
 
 
 def test(model, dataset):
@@ -572,7 +572,7 @@ if __name__ == "__main__":
         if metric == "r2":
             plt.ylim(0.5, 1)
         plt.tight_layout()
-        plt.savefig(f"figs/imputation/{metric.replace(' ', '_').lower()}.png", dpi=300)
+        plt.savefig(f"figs/imputation/{metric.replace(' ', '_').lower()}.pdf", dpi=300)
         plt.close()
 
     if not df_maf_plot.empty:
@@ -612,7 +612,7 @@ if __name__ == "__main__":
 
             plt.tight_layout()
             plt.savefig(
-                f"figs/imputation/{metric.replace(' ', '_').lower()}_vs_maf_mask80.png",
+                f"figs/imputation/{metric.replace(' ', '_').lower()}_vs_maf_mask80.pdf",
                 dpi=300,
             )
             plt.close()

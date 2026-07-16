@@ -1,11 +1,12 @@
 import re
-from ..core import BaseHFEvaluator
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import seaborn as sns
 import theme
+
+from ..core import BaseHFEvaluator
 
 
 class GenomeClassificationEvaluator(BaseHFEvaluator):
@@ -69,9 +70,7 @@ class GenomeClassificationEvaluator(BaseHFEvaluator):
         for chrom, start, end in windows:
             if "chrom" in df.columns:
                 window_df = df[
-                    (df["chrom"] == chrom)
-                    & (df["start"] <= end)
-                    & (df["end"] >= start)
+                    (df["chrom"] == chrom) & (df["start"] <= end) & (df["end"] >= start)
                 ]
             else:
                 window_df = df[(df["start"] <= end) & (df["end"] >= start)]
@@ -261,7 +260,7 @@ def plot_region(
         if label_df is not None:
             for idx, r in label_df.iterrows():
                 x0 = r["start"] - 100000
-                x1 = r["end"] + 100000 # add some padding to make it more visible
+                x1 = r["end"] + 100000  # add some padding to make it more visible
                 if idx == 0:
                     label = "Selection region"
                 else:
@@ -424,7 +423,7 @@ def plot_rate_vs_threshold(
         )
     ax.set_xlabel("Fraction of genome predicted selected")
     ax.set_ylabel(rate_name)
-    ax.set_title(''.join([c for c in dataset_name if c.isupper()]))
+    ax.set_title("".join([c for c in dataset_name if c.isupper()]))
     ax.grid(True, alpha=0.3, linestyle="--")
     ax.legend(loc="lower right")
     plt.savefig(save_path, dpi=300, bbox_inches="tight")
@@ -461,7 +460,7 @@ def plot_called_pos_vs_neg(
 
     ax.set_xlabel("# Reich et al. negatives called")
     ax.set_ylabel("# Grossman et al. positives called")
-    ax.set_title(''.join([c for c in dataset_name if c.isupper()]))
+    ax.set_title("".join([c for c in dataset_name if c.isupper()]))
     ax.grid(True, alpha=0.3, linestyle="--")
     ax.legend(loc="lower right")
     plt.savefig(save_path, dpi=300, bbox_inches="tight")

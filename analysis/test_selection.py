@@ -44,7 +44,7 @@ def plot_classification_curves(
                 models,
                 dataset=ds,
                 curve_type=typ,
-                save_path=f"figs/{ds}_{typ}{'_' + final_suffix if final_suffix else ''}.png",
+                save_path=f"figs/{ds}_{typ}{'_' + final_suffix if final_suffix else ''}.pdf",
             )
 
 
@@ -105,7 +105,7 @@ def plot_roc_by_s(results, models, dataset_name="pan_test"):
             )
     fig.supxlabel("False Positive Rate", fontsize=16)
     fig.supylabel("True Positive Rate", fontsize=16)
-    plt.savefig(f"figs/{dataset_name}_roc_facet_grid.png", dpi=300, bbox_inches="tight")
+    plt.savefig(f"figs/{dataset_name}_roc_facet_grid.pdf", dpi=300, bbox_inches="tight")
     plt.close()
 
 
@@ -161,7 +161,7 @@ def plot_roc_by_s_f(results, models, dataset_name="pan_test"):
             )
     fig.supxlabel("False Positive Rate", fontsize=16)
     fig.supylabel("True Positive Rate", fontsize=16)
-    plt.savefig(f"figs/{dataset_name}_roc_facet_grid.png", dpi=300, bbox_inches="tight")
+    plt.savefig(f"figs/{dataset_name}_roc_facet_grid.pdf", dpi=300, bbox_inches="tight")
     plt.close()
 
 
@@ -176,6 +176,7 @@ def plot_acc_by_x(
     log_x=False,
     legend_placement="lower left",
     metric="auprc",
+    suffix="",
 ):
     df_acc = df[["model", "dataset", x, metric]].copy()
     df_acc = df_acc[~df_acc[x].isna()]
@@ -207,7 +208,7 @@ def plot_acc_by_x(
             label="tajimas_d",
         )
     random_classification.plot_y_by_x(
-        df_acc, y=metric, x=x, save_path=f"figs/{metric}_vs_{x}.png", ax=ax, logx=log_x
+        df_acc, y=metric, x=x, save_path=f"figs/{metric}_vs_{x}.pdf", ax=ax, logx=log_x
     )
     if x_func:
         x_func, subs = x_func
@@ -229,7 +230,7 @@ def plot_acc_by_x(
         if line not in lines and not line.get_label().startswith("_")
     ]
     ax.legend(handles=model_lines, loc=legend_placement)
-    plt.savefig(f"figs/{metric}_vs_{x}.png", dpi=300, bbox_inches="tight")
+    plt.savefig(f"figs/{metric}_vs_{x}{suffix}.pdf", dpi=300, bbox_inches="tight")
 
 
 def plot_popf_vs_summary_stats(results, models, dataset_name="pan_test"):
@@ -257,7 +258,7 @@ def plot_popf_vs_summary_stats(results, models, dataset_name="pan_test"):
             y2lab=stat,
             color_by=s[valid],
             color_by_label="s",
-            save_path=f"figs/{dataset_name}_correlation_{stat}.png",
+            save_path=f"figs/{dataset_name}_correlation_{stat}.pdf",
         )
 
 
@@ -349,6 +350,7 @@ if __name__ == "__main__":
                 x_func=(N_labeller, (10, 5)),
                 flip_x=args.trained_on > 10000,
                 log_x=True,
+                suffix=f"_{args.trained_on}",
             )
 
     if args.trainsizes:

@@ -112,7 +112,7 @@ def plot_regions(results, datasets, labels):
             window=15,
             window_type="mean",
             label_df=label,
-            save_path=f"figs/sweeps/{ds}_region_plot.png",
+            save_path=f"figs/sweeps/{ds}_region_plot.pdf",
         )
 
 
@@ -135,7 +135,7 @@ def plot_boxplots(results, datasets):
             y_preds=y_preds,
             model_names=model_names,
             sig_mask=sig_mask,
-            save_path=f"figs/{ds}_boxplot.png",
+            save_path=f"figs/{ds}_boxplot.pdf",
         )
 
 
@@ -167,7 +167,7 @@ def plot_rate(results, models, datasets, suffix=""):
                 rate_series,
                 ds,
                 rate_name="Grossman et al. TPR",
-                save_path=f"figs/{ds}_tpr_vs_threshold{'' if suffix == '' else '_' + suffix}.png",
+                save_path=f"figs/{ds}_tpr_vs_threshold{'' if suffix == '' else '_' + suffix}.pdf",
             )
 
 
@@ -205,7 +205,7 @@ def plot_enrichment(results, datasets, suffix=""):
             genome_classification.plot_enrichment_at_k(
                 enrichment_series,
                 ds,
-                save_path=f"figs/{ds}_enrichment_at_k{'' if suffix == '' else '_' + suffix}.png",
+                save_path=f"figs/{ds}_enrichment_at_k{'' if suffix == '' else '_' + suffix}.pdf",
             )
 
 
@@ -265,14 +265,16 @@ def plot_pos_vs_neg_called(results, models, datasets, suffix=""):
             neg_called = np.array(
                 [np.sum((neg_preds >= t) & neg_mask) for t in thresholds]
             )
-            auc = np.trapezoid(pos_called, neg_called) / (neg_mask.sum() * pos_mask.sum())
+            auc = np.trapezoid(pos_called, neg_called) / (
+                neg_mask.sum() * pos_mask.sum()
+            )
             called_series.append((m, neg_called, pos_called, auc))
 
         if called_series:
             genome_classification.plot_called_pos_vs_neg(
                 called_series,
                 base_ds,
-                save_path=f"figs/{base_ds}_pos_vs_neg_called{'' if suffix == '' else '_' + suffix}.png",
+                save_path=f"figs/{base_ds}_pos_vs_neg_called{'' if suffix == '' else '_' + suffix}.pdf",
             )
 
 
@@ -299,7 +301,7 @@ def plot_correlations(results, models, genome_ds):
             stat_preds[valid],
             y1lab=f"{theme.get_model_base_name(model)} score",
             y2lab=stat_label,
-            save_path=f"figs/genome_correlation_{stat_label.replace(' ', '_').lower()}_popf.png",
+            save_path=f"figs/genome_correlation_{stat_label.replace(' ', '_').lower()}_popf.pdf",
         )
 
 
@@ -310,7 +312,7 @@ def plot_null_distributions(results):
         genome_classification.plot_histogram_with_line(
             res["null"],
             res["obs"],
-            save_path=f"figs/{ds}_null_distribution.png",
+            save_path=f"figs/{ds}_null_distribution.pdf",
         )
 
 

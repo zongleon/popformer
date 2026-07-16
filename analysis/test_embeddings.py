@@ -5,20 +5,22 @@ Do the populations separate?
 
 import os
 import sys
-from cyvcf2 import VCF
-import pandas as pd
-import numpy as np
-from tqdm import tqdm
-import torch
-from torch.utils.data import DataLoader
-from transformers import AutoConfig
-from popformer.models import PopformerForMaskedLM, PopformerForWindowClassification
-from datasets import load_from_disk
-from popformer.collators import HaploSimpleDataCollator
-from sklearn.decomposition import PCA
-import seaborn as sns
+
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
 import theme
+import torch
+from cyvcf2 import VCF
+from datasets import load_from_disk
+from sklearn.decomposition import PCA
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+from transformers import AutoConfig
+
+from popformer.collators import HaploSimpleDataCollator
+from popformer.models import PopformerForMaskedLM, PopformerForWindowClassification
 
 
 def preds(model, ds):
@@ -117,18 +119,18 @@ def pca(embeds, lbls, figpath, legend_title="POP", continuous=False, alpha=None)
     plt.bar(range(len(var)), var)
     plt.xlabel("pc #")
     plt.ylabel("variance")
-    plt.savefig(f"figs/embeds/pca_ev_{legend_title}.png", dpi=300, bbox_inches="tight")
+    plt.savefig(f"figs/embeds/pca_ev_{legend_title}.pdf", dpi=300, bbox_inches="tight")
 
     if continuous:
         fig, axs = plt.subplots(
             figsize=(11, 10),
             nrows=1,
             ncols=2,
-            layout="constrained",
+            # layout="constrained",
             width_ratios=[1, 0.05],
         )
     else:
-        plt.figure(figsize=(10, 10), layout="constrained")
+        plt.figure(figsize=(10, 10))
     s = sns.scatterplot(
         data=embeds_df,
         x="PC1",
@@ -138,8 +140,8 @@ def pca(embeds, lbls, figpath, legend_title="POP", continuous=False, alpha=None)
         alpha=alpha,
         ax=axs[0] if continuous else None,
         # legend="full",
+        # rasterized=True,
     )
-    s.ticklabel_format(axis="both", style="sci", scilimits=(0, 0))
 
     if continuous:
         norm = plt.Normalize(
@@ -149,15 +151,19 @@ def pca(embeds, lbls, figpath, legend_title="POP", continuous=False, alpha=None)
         sm.set_array([])
         s.get_legend().remove()
         s.figure.colorbar(sm, cax=axs[1], label=legend_title)
+    else:
+        plt.legend(fontsize=16)
 
     sns.despine()
 
-    # plt.xlabel("PC1")
-    # plt.ylabel("PC2")
-    # plt.title("pca")
+    s.set_xticks([])
+    s.set_yticks([])
+
+    s.set_xlabel(f"PC1 ({var[0]:.2%})", fontsize=16)
+    s.set_ylabel(f"PC2 ({var[1]:.2%})", fontsize=16)
     # plt.legend(title=legend_title, bbox_to_anchor=(1.03, 1))
 
-    plt.savefig(figpath, dpi=300)
+    plt.savefig(figpath, dpi=600, bbox_inches="tight")
 
 
 def attns(model):
@@ -191,7 +197,7 @@ def attns(model):
     plt.ylabel("Haplotype")
     plt.title("Original Haplotype Matrix")
     plt.colorbar(label="Allele")
-    plt.savefig("figs/ex_matrix.png", dpi=300)
+    plt.savefig("figs/ex_matrix.pdf", dpi=300)
 
     # Plot row attention maps for each head in layer idx
     num_heads = row_attn.shape[0]
@@ -205,7 +211,7 @@ def attns(model):
         fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
     plt.tight_layout()
-    plt.savefig("figs/snp_attn.png", dpi=300)
+    plt.savefig("figs/snp_attn.pdf", dpi=300)
 
 
 if __name__ == "__main__":
@@ -239,7 +245,7 @@ if __name__ == "__main__":
         collator = HaploSimpleDataCollator(subsample=None)
 
         model = PopformerForMaskedLM.from_pretrained(
-            "./models/popf-small", torch_dtype=torch.float16
+            "./models/popf-base-real", torch_dtype=torch.float16
         )
         model.to("cuda")
         model.eval()
@@ -262,13 +268,13 @@ if __name__ == "__main__":
         embeds = embeds[mask]
         lbls = lbls[mask]
 
-        pca(embeds, lbls, "figs/embeds/pca.png")
+        pca(embeds, lbls, "figs/embeds/pca.pdf")
     elif mode == "selection":
         if sys.argv[2] == "init":
             embeds_path = "embeds_sel_init.npy"
             model = PopformerForMaskedLM(
                 AutoConfig.from_pretrained(
-                    "./models/popf-small",
+                    "./models/popf-base-real",
                 ),
             )
             model.init_weights()
@@ -277,7 +283,7 @@ if __name__ == "__main__":
         elif sys.argv[2] == "base":
             embeds_path = "embeds_sel_base.npy"
             model = PopformerForMaskedLM.from_pretrained(
-                "./models/popf-small", torch_dtype=torch.float16
+                "./models/popf-base-real", torch_dtype=torch.float16
             )
         elif sys.argv[2] == "finetune":
             embeds_path = "embeds_sel_ft.npy"
@@ -332,11 +338,11 @@ if __name__ == "__main__":
         # lbls = (np.array(ds["label"]) == 0) & (np.array(ds["s"]) > 0)
         # lbls = lbls.astype(int)
 
-        # pca(embeds, lbls, "figs/embeds/pca.png", legend_title="s", continuous=True)
+        # pca(embeds, lbls, "figs/embeds/pca.pdf", legend_title="s", continuous=True)
         pca(
             embeds,
             lbls,
-            f"figs/embeds/pcasel_{var}_{sys.argv[2]}.png",
+            f"figs/embeds/pcasel_{var}_{sys.argv[2]}.pdf",
             legend_title=var,
             continuous=True if var == "s" else False,
         )

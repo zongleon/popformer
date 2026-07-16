@@ -1,5 +1,6 @@
 import argparse
 import os
+import re
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -57,12 +58,12 @@ def sweep(
 
     collator = HaploSimpleDataCollator(
         subsample=(subsample, subsample) if subsample else None,
-        # subsample_type="diverse",
+        subsample_type="diverse",
     )
 
     loader = DataLoader(
         data,
-        batch_size=4,
+        batch_size=1,
         num_workers=4,
         collate_fn=collator,
     )
@@ -399,18 +400,23 @@ def plot_manhattan(
 
 def plot_region(preds_path, out_fig_path, window=0, label_df=None):
     data = np.load(preds_path)
+    pop = re.search(r"([A-Z]{3})", preds_path)
+    pop = pop.group(1) if pop else "CEU"
     preds = data["preds"]
     ylbl = "pred. probability of selection"
 
     start_pos = data["start_pos"]
     end_pos = data["end_pos"]
 
+    if preds.ndim == 2:
+        preds = torch.softmax(torch.tensor(preds), dim=-1)[:, 1].numpy()
+
     # Smooth predictions by averaging over surrounding predictions
     if isinstance(window, int) and window > 1:
         kernel = np.ones(window, dtype=float) / window
         preds = np.convolve(preds, kernel, mode="same")
 
-    label_df = label_df[label_df["Population"] == "CEU"].reset_index(drop=True)
+    label_df = label_df[label_df["Population"] == pop].reset_index(drop=True)
     fig, axs = plt.subplots(
         label_df.shape[0], 1, figsize=(12, 6 * label_df.shape[0]), layout="constrained"
     )
@@ -420,9 +426,7 @@ def plot_region(preds_path, out_fig_path, window=0, label_df=None):
         x1 = r["End"]
         chrom = int(r["Chromosome"].replace("chr", ""))
         mask = (
-            (data["chrom"] == chrom)
-            & (start_pos >= x0 - 500000)
-            & (end_pos <= x1 + 500000)
+            (data["chrom"] == chrom) & (start_pos >= x0 - 1e6) & (end_pos <= x1 + 1e6)
         )
         preds_region = preds[mask]
         start_pos_region = start_pos[mask]
@@ -470,13 +474,17 @@ def main():
     preds_path = None
 
     if args.save_logits or args.save_features:
-        if os.path.exists(args.save_features):
+        if args.save_features is not None and os.path.exists(args.save_features):
             print("Skipping sweep for features that already exist.")
-            raise SystemExit
-        preds_path = args.save_logits
-        sweep(
-            data, model, args.save_logits, args.save_features, subsample=args.subsample
-        )
+        else:
+            preds_path = args.save_logits
+            sweep(
+                data,
+                model,
+                args.save_logits,
+                args.save_features,
+                subsample=args.subsample,
+            )
 
     if args.plot_preds:
         preds_path = args.logits_path if args.logits_path else preds_path
